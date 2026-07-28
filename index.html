@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>星盾防线 / Star Shield</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage">
+      <canvas id="game"></canvas>
+    </div>
+
+    <aside class="panel">
+      <h1>星盾防线</h1>
+      <p class="hint">拖拽空白处摆放星体，实时预测 5 秒轨迹。守护母星！</p>
+
+      <div class="block">
+        <div class="label">星体档位（点击选择）</div>
+        <div class="tiers">
+          <button class="tier" data-tier="small">小行星<br><small>m=50 · 3点</small></button>
+          <button class="tier" data-tier="medium">中行星<br><small>m=200 · 6点</small></button>
+          <button class="tier" data-tier="large">大行星<br><small>m=600 · 12点</small></button>
+          <button class="tier" data-tier="star">恒星<br><small>m=1500 · 20点</small></button>
+          <button class="tier" data-tier="blackhole">黑洞<br><small>m=6000 · 30点 · 静止·限时12s</small></button>
+        </div>
+      </div>
+
+      <div class="block btns">
+        <button id="pauseBtn">暂停</button>
+        <button id="modeBtn">模式：简易</button>
+      </div>
+
+      <div class="block">
+        <label class="chk"><input type="checkbox" id="hintChk" checked /> 提示线（运动星体轨迹预测）</label>
+      </div>
+
+      <div id="proPanel" class="block" style="display:none">
+        <label class="chk"><input type="checkbox" id="predChk" checked /> 显示预测线</label>
+        <label class="chk"><input type="checkbox" id="precChk" /> 精确输入 vx,vy</label>
+        <div id="precInputs" class="prec" style="display:none">
+          <input id="vx" type="number" step="1" placeholder="vx (m/s)" />
+          <input id="vy" type="number" step="1" placeholder="vy (m/s)" />
+        </div>
+      </div>
+
+      <div class="block">
+        <button id="restartBtn" class="restart">重新开始</button>
+      </div>
+
+      <div id="msg" class="msg"></div>
+
+      <div class="legend">
+        <div><span class="dot blue"></span> 蓝：安全 / 引力弹弓</div>
+        <div><span class="dot red"></span> 红：将撞母星，别放！</div>
+        <div><span class="dot green"></span> 绿：将被黑洞吞噬</div>
+        <div class="note">黑洞限时 12 秒后坍缩消失</div>
+        <div class="note">黑洞不能放在母星周围</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 脚本按依赖顺序引入；成员1/2 模块先加载，成员3 的 game/input 后加载 -->
+  <script src="js/physics.js"></script>
+  <script src="js/predictor.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/predictorRenderer.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/input.js"></script>
+</body>
+</html>

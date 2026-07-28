@@ -1,0 +1,84 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #05060f;
+  color: #e8ecf5;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wrap {
+  display: flex;
+  gap: 18px;
+  padding: 18px;
+  align-items: flex-start;
+}
+
+.stage {
+  background: #05060f;
+  border: 1px solid #1b2440;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(40, 90, 200, 0.15);
+}
+
+canvas { display: block; cursor: crosshair; }
+
+.panel {
+  width: 260px;
+  background: #0c1124;
+  border: 1px solid #1b2440;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h1 { font-size: 22px; letter-spacing: 2px; color: #ffd54a; }
+.hint { font-size: 12px; color: #8a93ad; margin: 8px 0 14px; line-height: 1.5; }
+
+.block { margin-bottom: 14px; }
+.label { font-size: 12px; color: #8a93ad; margin-bottom: 6px; }
+
+.tiers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tier {
+  flex: 1; padding: 8px 4px; font-size: 13px; line-height: 1.3;
+  background: #15203f; color: #cdd6ee; border: 1px solid #25335c;
+  border-radius: 8px; cursor: pointer; transition: .15s;
+}
+.tier small { color: #7f8bb0; }
+.tier:hover { border-color: #4a6cff; }
+.tier.active { background: #2a3e8c; border-color: #6f8dff; color: #fff; }
+.tier.locked { opacity: .4; cursor: not-allowed; }
+
+.btns { display: flex; gap: 8px; }
+.btns button {
+  flex: 1; padding: 9px; border-radius: 8px; cursor: pointer;
+  background: #15203f; color: #cdd6ee; border: 1px solid #25335c; font-size: 13px;
+}
+.btns button:hover { border-color: #4a6cff; }
+
+.chk { display: block; font-size: 13px; margin: 6px 0; color: #cdd6ee; }
+.prec { margin-top: 6px; display: flex; gap: 6px; }
+.prec input {
+  flex: 1; width: 100%; padding: 6px; border-radius: 6px;
+  background: #0a0f20; border: 1px solid #25335c; color: #fff; font-size: 12px;
+}
+
+.restart {
+  width: 100%; padding: 9px; border-radius: 8px; cursor: pointer;
+  background: #3a2560; color: #fff; border: 1px solid #5a3a90; font-size: 13px;
+}
+.restart:hover { background: #4c2f80; }
+
+.msg {
+  min-height: 18px; font-size: 12px; color: #ff7a7a;
+  opacity: 0; transition: opacity .3s; margin-bottom: 10px;
+}
+
+.legend { font-size: 12px; color: #aab3cc; line-height: 1.9; border-top: 1px solid #1b2440; padding-top: 10px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.dot.blue { background: #3b9bff; }
+.dot.red { background: #ff3b3b; }
+.dot.green { background: #3bff6b; }
