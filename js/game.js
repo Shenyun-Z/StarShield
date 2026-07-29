@@ -45,7 +45,7 @@ const game = (function () {
     floaters: [],                             // 飘字（+分数 / -血量）浮动文字
     wave: 0, paused: false, mode: 'simple',   // 'simple' | 'pro'
     shake: 0, showPrediction: true, showHint: true,
-    hintCache: null, hintNext: 0, preciseOn: false,
+    hintCache: null, hintNext: 0, hintSampleDt: 0,
     currentTier: 'small',
     waveActive: false, spawnList: [], spawnTimer: 0, nextWaveTimer: 0,
     gameOver: false
@@ -202,11 +202,16 @@ const game = (function () {
     // 物理推进
     for (let k = 0; k < STEPS; k++) physics.stepSystem(state.bodies, DT);
 
-    // 飞出边界 判定（仅移除越界天体；捕捉环已移除）
+    // 触界即消失：任何非母星/非黑洞天体（含玩家放置的）一旦越过画布边缘并正向外飞出，
+    // 立即消失（escape）。用"向外飞出"判定，避免刚在边缘外生成、向场内飞来的陨石被误删。
     for (const b of state.bodies) {
       if (b.isStar || b.immovable || b.dead) continue;
-      if (b.x < -150 || b.x > W + 150 || b.y < -150 || b.y > H + 150) {
-        b.escaped = true; b.dead = true;
+      const outX = b.x < 0 || b.x > W;
+      const outY = b.y < 0 || b.y > H;
+      if (outX || outY) {
+        const movingOut = (b.x < 0 && b.vx < 0) || (b.x > W && b.vx > 0) ||
+                          (b.y < 0 && b.vy < 0) || (b.y > H && b.vy > 0);
+        if (movingOut) { b.escaped = true; b.dead = true; }
       }
     }
 
@@ -303,19 +308,21 @@ const game = (function () {
       if (!state.hintCache || now >= state.hintNext) {
         const res = predictor.simulateFuture(state.bodies,
           { duration: physics.PREDICT_DUR, dt: physics.PREDICT_DT });
-        const map = new Map();
-        for (let i = 0; i < state.bodies.length; i++) map.set(state.bodies[i], res.paths[i]);
-        state.hintCache = map;
+        state.hintCache = res;                 // 整段模拟结果（paths/bodies/sampleDt）
+        state.hintSampleDt = res.sampleDt;     // 预测线相邻点真实时间间隔
         state.hintNext = now + 150;   // 节流：约 150ms 重算一次（降低运算负担）
         state.hintSmooth = true;      // 标记：本帧有新预测，下一帧做插值平滑
       }
-      for (const b of state.bodies) {
+      if (!state.hintDisp) state.hintDisp = new Map();
+      for (let bi = 0; bi < state.bodies.length; bi++) {
+        const b = state.bodies[bi];
         if (b.dead || b.isStar || b.immovable) continue;
-        const path = state.hintCache.get(b);
+        const path = state.hintCache.paths[bi];
         if (!path || path.length < 2) continue;
-        const risk = predictor.evaluateRisk(path, state.star, state.bodies, b);
+        // 用"与预测线同一时刻同步演化"的其它天体未来位置做碰撞评估（修#1 判色失真）
+        const risk = predictor.evaluateRisk(state.hintCache, bi, state.star);
         // 平滑缓冲：显示路径逐帧指数插值向新预测靠拢，消除 150ms 重算时的硬跳/闪烁
-        let disp = state.hintDisp && state.hintDisp.get(b);
+        let disp = state.hintDisp.get(b);
         if (!disp || disp.length !== risk.path.length) {
           disp = risk.path.map(p => ({ x: p.x, y: p.y }));   // 长度变化则重置（换轨迹）
         } else {
@@ -325,9 +332,13 @@ const game = (function () {
             disp[i].y += (risk.path[i].y - disp[i].y) * k;
           }
         }
-        if (!state.hintDisp) state.hintDisp = new Map();
         state.hintDisp.set(b, disp);
-        predictorRenderer.drawPredictionLine(disp, risk, true, physics.PREDICT_DT);
+        // dt 传真实采样间隔（= sampleDt），使"每 2 秒一段、共三段"正确（修#4）
+        predictorRenderer.drawPredictionLine(disp, risk, true, state.hintSampleDt);
+      }
+      // 清理已不存在（死亡/移除）星体的提示缓冲，避免 hintDisp 内存只增不减（修#5）
+      for (const key of Array.from(state.hintDisp.keys())) {
+        if (!state.bodies.includes(key)) state.hintDisp.delete(key);
       }
       state.hintSmooth = false;
     } else if (state.hintDisp) {

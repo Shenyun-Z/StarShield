@@ -23,15 +23,11 @@ const input = (function () {
     };
   }
 
-  // 计算当前幽灵星体的初速：精确模式用输入框，否则用拖拽矢量
+  // 计算当前幽灵星体的初速：拖拽矢量换算（1px = ARROW_SCALE m/s）。
+  // 黑洞不可动：初速恒为 0，仅靠其超大质量施加引力改变其它天体轨道。
+  // （专业模式的精确 vx,vy 输入逻辑已按需求移除）
   function ghostVelocity() {
     const tier = game.TIERS[game.state.currentTier];
-    if (game.state.preciseOn) {
-      const vx = parseFloat(document.getElementById('vx').value) || 0;
-      const vy = parseFloat(document.getElementById('vy').value) || 0;
-      return { vx, vy };
-    }
-    // 黑洞不可动：初速恒为 0，仅靠其超大质量施加引力改变其它天体轨道
     if (tier.immovable) return { vx: 0, vy: 0 };
     const dx = api.smx - api.sx, dy = api.smy - api.sy;
     return { vx: dx * physics.ARROW_SCALE, vy: dy * physics.ARROW_SCALE };
@@ -45,16 +41,12 @@ const input = (function () {
 
     const tier = game.TIERS[game.state.currentTier];
     // 用平滑后的鼠标坐标计算初速/位置，抑制高频抖动
-    const rawVx = (api.smx - api.sx) * physics.ARROW_SCALE;
-    const rawVy = (api.smy - api.sy) * physics.ARROW_SCALE;
     let v;
-    if (game.state.preciseOn) {
-      v = { vx: parseFloat(document.getElementById('vx').value) || 0,
-            vy: parseFloat(document.getElementById('vy').value) || 0 };
-    } else if (tier.immovable) {
+    if (tier.immovable) {
       v = { vx: 0, vy: 0 };   // 黑洞不可动
     } else {
-      v = { vx: rawVx, vy: rawVy };
+      v = { vx: (api.smx - api.sx) * physics.ARROW_SCALE,
+            vy: (api.smy - api.sy) * physics.ARROW_SCALE };
     }
     const ghost = physics.createBody(tier.mass, api.sx, api.sy, v.vx, v.vy,
                                      { isCollectable: true, immovable: !!tier.immovable,
@@ -64,8 +56,8 @@ const input = (function () {
     const all = game.state.bodies.concat([ghost]);
     const res = predictor.simulateFuture(all,
                                          { duration: physics.PREDICT_DUR, dt: physics.PREDICT_DT });
-    api.pathDt = physics.PREDICT_DT;
-    api.risk = predictor.evaluateRisk(res.paths[all.length - 1], game.state.star, all, ghost);
+    api.pathDt = res.sampleDt;     // 真实采样间隔，供预测线分段渲染
+    api.risk = predictor.evaluateRisk(res, all.length - 1, game.state.star);
     api.path = api.risk.path;   // 使用按碰撞点截断后的轨迹，避免画穿天体
   }
 
@@ -171,10 +163,6 @@ const input = (function () {
     });
     document.getElementById('hintChk').addEventListener('change', e => {
       game.state.showHint = e.target.checked;
-    });
-    document.getElementById('precChk').addEventListener('change', e => {
-      game.state.preciseOn = e.target.checked;
-      document.getElementById('precInputs').style.display = e.target.checked ? 'block' : 'none';
     });
     document.getElementById('restartBtn').addEventListener('click', () => location.reload());
   }

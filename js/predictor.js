@@ -8,8 +8,11 @@
  * 再按 sampleEvery 降采样输出（保真且不过慢）。
  *
  * 导出（全局命名空间 predictor.xxx）：
- *   predictor.simulateFuture(bodies, {duration, dt}) → {paths:[{x,y}...]}
- *   predictor.evaluateRisk(path, star, bodies, owner) → {level, path(已按碰撞点截断), endX, endY, captured, hitMother}
+ *   predictor.simulateFuture(bodies, {duration, dt}) → {paths:[{x,y}...], bodies, sampleDt}
+ *   predictor.evaluateRisk(sim, ownerIndex, star)
+ *        → {level, path(已按碰撞点截断), endX, endY, captured, hitMother}
+ *      sim 为 simulateFuture 的返回值；碰撞检测使用与预测线同一时刻、同步演化的
+ *      其它天体未来位置（而非当前静止快照），修正在多运动天体下预测线判色失真的问题。
  */
 
 (function (global) {
@@ -77,32 +80,42 @@
       }
       for (let i = 0; i < clones.length; i++) prevDead[i] = clones[i].dead;
     }
-    return { paths: paths };
+    // 返回：全部天体路径 paths、原始 bodies（供按索引发掘碰撞特征）、相邻点真实时间间隔 sampleDt
+    return { paths: paths, bodies: bodies, sampleDt: sampleEvery * dt };
   }
 
   /* ============ 风险评估：三色 + 轨迹截断 ============ */
-  // path: 预测路径数组；star: 母星 Body；bodies: 当前全体（用于检测碰撞）；
-  // owner: 该路径所属天体（避免与自身判定，并提供其半径用于碰撞阈值）。
+  // sim: simulateFuture 的返回值；ownerIndex: 该路径在 paths/bodies 中的索引；star: 母星 Body。
   // 返回 {level:'blue'|'red'|'green', path(已按碰撞点截断), endX, endY, captured, hitMother}
   //   绿：预测轨迹将被某黑洞（不可动天体）吞噬
   //   红：预测轨迹将撞上母星 或 撞上其它星体（轨迹被阻断）
   //   蓝：其余（安全 / 引力弹弓）
-  // 关键修复（与物理 stepSystem 的碰撞阈值一致，且用整段检测避免隧穿）：
-  //   1) 黑洞吞噬判定半径 = 黑洞半径 + 自身半径（原只比黑洞半径 → 永为蓝）；
-  //   2) 沿路径逐段求"入口点"，从碰撞点截断轨迹，轨迹不再"穿过"天体还被判可通行。
-  function evaluateRisk(path, star, bodies, owner) {
+  // 关键修复：
+  //   1) 碰撞检测使用"与预测线同一步、同步演化的其它天体未来位置"（取 paths[k][i]），
+  //      而非当前静止快照，修正多运动天体下预测线判色失真（原 bug：应红却蓝 / 误报红）；
+  //   2) 黑洞吞噬判定半径 = 黑洞半径 + 自身半径（与 stepSystem 一致，原只比黑洞半径→永为蓝）；
+  //   3) 沿路径逐段求"入口点"并从碰撞点截断轨迹，避免画穿天体还被判可通行（整段检测防隧穿）；
+  //   4) 删除"末端点落在母星 2R 内即无条件标红"的启发式——擦边/转向也会中招，误导玩家。
+  function evaluateRisk(sim, ownerIndex, star) {
+    const paths = sim.paths;
+    const bodies = sim.bodies;
+    const owner = bodies[ownerIndex];
+    const ownerPath = paths[ownerIndex];
     const ownerR = (owner && owner.radius) ? owner.radius : 0;
     let collideIdx = -1, entry = null, level = 'blue', captured = false, hitMother = false;
 
     // 沿路径逐段找最早碰撞（最先发生者决定颜色与截断点）
-    for (let i = 0; i < path.length - 1; i++) {
-      const p0 = path[i], p1 = path[i + 1];
+    // 第 i 段（path[i]→path[i+1]）对应其它天体第 i 个采样点 paths[k][i]，时刻一致
+    for (let i = 0; i < ownerPath.length - 1; i++) {
+      const p0 = ownerPath[i], p1 = ownerPath[i + 1];
       for (let k = 0; k < bodies.length; k++) {
+        if (k === ownerIndex) continue;
         const o = bodies[k];
-        if (o === owner || o.dead) continue;
+        const op = paths[k];
+        if (!op || i >= op.length) continue;     // 该天体此刻已提前死亡/无坐标，跳过
         if (o.immovable && owner && owner.immovable) continue;  // 两不可动天体互不作用
-        const rr = o.radius + ownerR;        // 真实碰撞阈值（两球表面接触）
-        const pt = segCircleEntry(p0.x, p0.y, p1.x, p1.y, o.x, o.y, rr);
+        const rr = o.radius + ownerR;            // 真实碰撞阈值（两球表面接触）
+        const pt = segCircleEntry(p0.x, p0.y, p1.x, p1.y, op[i].x, op[i].y, rr);
         if (!pt) continue;
         collideIdx = i;
         entry = pt;
@@ -116,17 +129,13 @@
 
     let outPath, endX, endY;
     if (collideIdx >= 0) {
-      outPath = path.slice(0, collideIdx + 1);
+      outPath = ownerPath.slice(0, collideIdx + 1);
       outPath.push(entry);    // 截到进入碰撞圈的那一点，避免画穿天体
       endX = entry.x; endY = entry.y;
     } else {
-      outPath = path;
-      const e = path[path.length - 1];
+      outPath = ownerPath;
+      const e = ownerPath[ownerPath.length - 1];
       endX = e.x; endY = e.y;
-      // 末段未撞天体但终点逼近母星（原启发式保留）
-      if (star && Math.hypot(endX - star.x, endY - star.y) <= 2 * star.radius) {
-        level = 'red'; hitMother = true;
-      }
     }
 
     return { level: level, path: outPath, endX: endX, endY: endY, captured: captured, hitMother: hitMother };

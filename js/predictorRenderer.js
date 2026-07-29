@@ -23,9 +23,10 @@ const predictorRenderer = (function () {
   //  - 实线，按"元时间间隔 BASE_T 秒"分段，段间在分界点短暂留空（抬笔）
   //  - 每段线宽固定，越往后（未来越久）越细，粗细分明
   //  - 拖拽放置线与运动提示线共用同一规范
-  const BASE_T = 1.0;        // 元时间间隔(s)：每段实线的分界点
-  const GAP_T  = 0.15;       // 分界点留空时长(s)：每段开头跳过这么久的点不画
-  const BASE_W = 4.0;        // 第 0 段（0~1s）线宽
+  //  - 预测总时长 6s，每 2s 一段，共 3 段（BASE_T=2.0）
+  const BASE_T = 2.0;        // 元时间间隔(s)：每段实线的分界点（每 2 秒一段）
+  const GAP_T  = 0.3;        // 分界点留空时长(s)：每段开头跳过这么久的点不画（分段更清晰）
+  const BASE_W = 4.0;        // 第 0 段（0~2s）线宽
   const STEP_W = 0.9;        // 每往后一段减小的线宽
   const MIN_W  = 0.8;        // 最细下限
 
@@ -63,7 +64,7 @@ const predictorRenderer = (function () {
   }
 
   // 三色预测线（拖拽放置 + 运动星体提示线共用）。steady=true 时不闪烁，始终稳定显示
-  // dt：路径相邻点真实时间间隔（hint 线传 physics.DT，drag 线传 physics.PREDICT_DT）
+  // dt：路径相邻点真实时间间隔（= simulateFuture 返回的 sampleDt = PREDICT_DT * sampleEvery）
   function drawPredictionLine(path, risk, steady, dt) {
     if (!path || path.length < 2) return;
     const color = risk.level === 'red' ? '#ff3b3b'

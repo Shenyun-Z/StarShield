@@ -14,7 +14,7 @@
 
     <aside class="panel">
       <h1>星盾防线</h1>
-      <p class="hint">拖拽空白处摆放星体，实时预测 5 秒轨迹。守护母星！</p>
+      <p class="hint">拖拽空白处摆放星体，实时预测 6 秒轨迹（每 2 秒一段）。守护母星！</p>
 
       <div class="block">
         <div class="label">星体档位（点击选择）</div>
@@ -38,11 +38,6 @@
 
       <div id="proPanel" class="block" style="display:none">
         <label class="chk"><input type="checkbox" id="predChk" checked /> 显示预测线</label>
-        <label class="chk"><input type="checkbox" id="precChk" /> 精确输入 vx,vy</label>
-        <div id="precInputs" class="prec" style="display:none">
-          <input id="vx" type="number" step="1" placeholder="vx (m/s)" />
-          <input id="vy" type="number" step="1" placeholder="vy (m/s)" />
-        </div>
       </div>
 
       <div class="block">

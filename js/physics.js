@@ -6,7 +6,7 @@
  * 所有常量均为"可调玩法参数"，成员2/3 可直接引用 physics.G 等按需微调。
  *
  * 导出（全局命名空间，供其他脚本以 physics.xxx 调用）：
- *   physics.createBody / stepSystem / computeForce / mergeBodies / fieldAt
+ *   physics.createBody / stepSystem / computeForce / fieldAt
  *   physics.pruneBodies（辅助：移除 dead 天体）
  *   physics.<常量>
  */
@@ -22,7 +22,7 @@
   const STAR_R = 30;        // 母星半径(px)
   const STAR_MASS = 4000;   // 母星默认质量（建议值，game.js 创建母星时参考）
   const PREDICT_DT = 0.05;  // 预测积分步长(s)：细步长→高保真，与真实 stepSystem 偏差更小、轨迹更顺滑
-  const PREDICT_DUR = 5;    // 预测时长(s) ≈ 100 步
+  const PREDICT_DUR = 6;    // 预测时长(s) = 3 段 × 2s，与提示线分段一致
   const ARROW_SCALE = 0.5;  // 拖拽箭头：1px = 0.5 m/s（输入换算用）
 
   /* ============ 天体结构 ============ */
@@ -88,25 +88,6 @@
       ay += a * dy;
     }
     return { fx: ax, fy: ay };
-  }
-
-  /* ============ 动量守恒合并 ============ */
-  // mergeBodies(a, b)：把质量较小者并入较大者（动量守恒），较小者标记 dead。
-  function mergeBodies(a, b) {
-    const keep = a.mass >= b.mass ? a : b;
-    const absorb = a.mass >= b.mass ? b : a;
-    const m = keep.mass + absorb.mass;
-    // 动量守恒
-    keep.vx = (keep.mass * keep.vx + absorb.mass * absorb.vx) / m;
-    keep.vy = (keep.mass * keep.vy + absorb.mass * absorb.vy) / m;
-    // 质心位置
-    keep.x = (keep.mass * keep.x + absorb.mass * absorb.x) / m;
-    keep.y = (keep.mass * keep.y + absorb.mass * absorb.y) / m;
-    keep.mass = m;
-    keep.radius = keep.isStar ? STAR_R : RADIUS_K * Math.cbrt(m);
-    absorb.dead = true;
-    absorb.merged = true;
-    return keep;
   }
 
   /* ============ 碰撞处理（stepSystem 内部） ============ */
@@ -207,7 +188,6 @@
     createBody: createBody,
     computeForce: computeForce,
     fieldAt: fieldAt,
-    mergeBodies: mergeBodies,
     stepSystem: stepSystem,
     pruneBodies: pruneBodies,
   };
