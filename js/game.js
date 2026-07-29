@@ -43,7 +43,7 @@ const game = (function () {
     destroyed: 0, captured: 0,                // 撞毁(撞击/撕裂) / 吸入(黑洞吞噬) 的陨石计数
     fx: [],                                   // 爆炸特效（粒子/冲击波/闪光）
     floaters: [],                             // 飘字（+分数 / -血量）浮动文字
-    wave: 0, paused: false, mode: 'simple',   // 'simple' | 'pro'
+    wave: 0, paused: false,
     shake: 0, showPrediction: true, showHint: true,
     hintCache: null, hintNext: 0, hintSampleDt: 0,
     currentTier: 'small',

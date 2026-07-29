@@ -1,7 +1,7 @@
 /* =========================================================================
  * input.js  —— 成员3（交互/游戏系统）核心文件
  * 职责：拖拽绘图法三阶段（按下->移动30Hz刷预测线->松开实体化）
- *       质量档+预算 / 暂停 / 简易·专业模式 / 精确输入面板
+ *       质量档+预算 / 暂停 / 提示线·预测线开关
  * 严格对接 PLAN.md 第8节：调用 physics / predictor / predictorRenderer。
  * ========================================================================= */
 const input = (function () {
@@ -25,7 +25,7 @@ const input = (function () {
 
   // 计算当前幽灵星体的初速：拖拽矢量换算（1px = ARROW_SCALE m/s）。
   // 黑洞不可动：初速恒为 0，仅靠其超大质量施加引力改变其它天体轨道。
-  // （专业模式的精确 vx,vy 输入逻辑已按需求移除）
+  // （精确 vx,vy 输入逻辑已按需求移除）
   function ghostVelocity() {
     const tier = game.TIERS[game.state.currentTier];
     if (tier.immovable) return { vx: 0, vy: 0 };
@@ -128,14 +128,6 @@ const input = (function () {
     document.getElementById('pauseBtn').textContent = game.state.paused ? '继续' : '暂停';
   }
 
-  function toggleMode() {
-    game.state.mode = (game.state.mode === 'simple') ? 'pro' : 'simple';
-    const pro = game.state.mode === 'pro';
-    document.getElementById('modeBtn').textContent = pro ? '模式：专业' : '模式：简易';
-    document.getElementById('proPanel').style.display = pro ? 'block' : 'none';
-    if (!pro) { game.state.showPrediction = true; document.getElementById('predChk').checked = true; }
-  }
-
   function flash(msg) {
     const el = document.getElementById('msg');
     el.textContent = msg;
@@ -157,7 +149,6 @@ const input = (function () {
     selectTier('small');
 
     document.getElementById('pauseBtn').addEventListener('click', togglePause);
-    document.getElementById('modeBtn').addEventListener('click', toggleMode);
     document.getElementById('predChk').addEventListener('change', e => {
       game.state.showPrediction = e.target.checked;
     });

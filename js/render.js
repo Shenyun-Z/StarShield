@@ -198,28 +198,6 @@ const render = (function () {
     ctx.restore();
   }
 
-  // 高级模式：在每个星体旁标注参数（质量 / 速度矢量 / 速率）
-  function drawBodyParams(bodies, state) {
-    if (state.mode !== 'pro') return;
-    ctx.save();
-    ctx.font = '10px "Consolas", monospace';
-    ctx.textAlign = 'left';
-    for (const b of bodies) {
-      if (b.dead) continue;
-      const sp = Math.hypot(b.vx, b.vy);
-      const tag = (b.isStar ? '★ ' : (b.isMeteorite ? '☄ ' : '· '));
-      const label = tag + 'm=' + b.mass.toFixed(0) +
-                    ' v=' + b.vx.toFixed(0) + ',' + b.vy.toFixed(0) +
-                    ' |v|=' + sp.toFixed(0);
-      const tx = b.x + b.radius + 4, ty = b.y - b.radius - 3;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillText(label, tx + 1, ty + 1);   // 阴影，提升可读性
-      ctx.fillStyle = b.isStar ? '#ffd54a' : (b.isMeteorite ? '#ffb38a' : '#bfe3ff');
-      ctx.fillText(label, tx, ty);
-    }
-    ctx.restore();
-  }
-
   function drawFrame(bodies, state) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     // 背景
@@ -242,7 +220,6 @@ const render = (function () {
     for (const b of bodies) drawBody(b);
     drawFx(state);
     drawFloaters(state);
-    drawBodyParams(bodies, state);
     ctx.restore();
 
     drawHUD(state);
