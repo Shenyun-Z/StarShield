@@ -94,11 +94,17 @@ canvas { display: block; cursor: crosshair; touch-action: none; }
   background: #0a0f20; border: 1px solid #25335c; color: #fff; font-size: 12px;
 }
 
+/* 平时弱化为次级按钮，避免与档位/时间按钮混淆而误触重开 */
 .restart {
   width: 100%; padding: 9px; border-radius: 8px; cursor: pointer;
-  background: #3a2560; color: #fff; border: 1px solid #5a3a90; font-size: 13px;
+  background: #1c2733; color: #aab3cc; border: 1px solid #2c3a49; font-size: 13px;
 }
-.restart:hover { background: #4c2f80; }
+.restart:hover { background: #243140; color: #fff; }
+/* 二次确认态：醒目红色，提示“再点一次就会重开” */
+.restart.armed {
+  color: #fff; background: #c0392b; border-color: #e74c3c; font-weight: 700;
+}
+.restart.armed:hover { background: #e74c3c; }
 
 .msg {
   min-height: 18px; font-size: 12px; color: #ff7a7a;

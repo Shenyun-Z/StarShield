@@ -235,9 +235,9 @@ const render = (function () {
     }
     ctx.restore();
 
-    // 屏震（暂停/结束时冻结，否则每帧随机抖动会让静止画面看起来在"反复播放"）
+    // 屏震（仅在游戏结束时冻结；减速时仍正常抖动）
     ctx.save();
-    if (state.shake > 0 && !state.paused && !state.gameOver) {
+    if (state.shake > 0 && !state.gameOver) {
       const s = state.shake;
       ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
     }

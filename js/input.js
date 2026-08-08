@@ -132,10 +132,18 @@ const input = (function () {
     });
   }
 
-  function togglePause() {
+  function toggleSlow() {
     if (game.state.gameOver) return;
-    game.state.paused = !game.state.paused;
-    document.getElementById('pauseBtn').textContent = game.state.paused ? '继续' : '暂停';
+    // 在「正常 1×」与「减速 0.25×」之间切换，让玩家从容布防（不再有完全暂停）
+    const slow = game.state.timeScale > 0.5;
+    game.state.timeScale = slow ? 0.25 : 1;
+    document.getElementById('slowBtn').textContent = slow ? '时间：减速' : '时间：正常';
+  }
+
+  function toggleAudio() {
+    const on = !audio.isEnabled();
+    audio.setEnabled(on);
+    document.getElementById('audioBtn').textContent = on ? '音效：开' : '音效：关';
   }
 
   function flash(msg) {
@@ -159,14 +167,37 @@ const input = (function () {
     });
     selectTier('small');
 
-    document.getElementById('pauseBtn').addEventListener('click', togglePause);
+    const slowBtn = document.getElementById('slowBtn');
+    slowBtn.addEventListener('click', toggleSlow);
+    slowBtn.textContent = game.state.timeScale > 0.5 ? '时间：正常' : '时间：减速';
+
+    const audioBtn = document.getElementById('audioBtn');
+    audioBtn.addEventListener('click', toggleAudio);
+    audioBtn.textContent = audio.isEnabled() ? '音效：开' : '音效：关';
+
     document.getElementById('predChk').addEventListener('change', e => {
       game.state.showPrediction = e.target.checked;
     });
     document.getElementById('hintChk').addEventListener('change', e => {
       game.state.showHint = e.target.checked;
     });
-    document.getElementById('restartBtn').addEventListener('click', () => location.reload());
+    const restartBtn = document.getElementById('restartBtn');
+    restartBtn.addEventListener('click', () => {
+      // 二次确认，避免误触丢失整局进度：点一次变「确认重开？」，再点才执行；3 秒内未确认自动还原
+      if (restartBtn.dataset.armed === '1') {
+        location.reload();
+        return;
+      }
+      restartBtn.dataset.armed = '1';
+      restartBtn.textContent = '确认重开？';
+      restartBtn.classList.add('armed');
+      clearTimeout(restartBtn._t);
+      restartBtn._t = setTimeout(() => {
+        restartBtn.dataset.armed = '0';
+        restartBtn.textContent = '重新开始';
+        restartBtn.classList.remove('armed');
+      }, 3000);
+    });
   }
 
   return Object.assign(api, { init });

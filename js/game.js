@@ -45,7 +45,7 @@ const game = (function () {
     destroyed: 0, captured: 0,                // 撞毁(撞击/撕裂) / 吸入(黑洞吞噬) 的陨石计数
     fx: [],                                   // 爆炸特效（粒子/冲击波/闪光）
     floaters: [],                             // 飘字（+分数 / -血量）浮动文字
-    wave: 0, paused: false,
+    wave: 0, timeScale: 1,
     shake: 0, showPrediction: true, showHint: true,
     hintCache: null, hintNext: 0, hintSampleDt: 0,
     currentTier: 'small',
@@ -192,8 +192,8 @@ const game = (function () {
 
   // ---- 每帧逻辑 ----
   function stepFrame() {
-    const dtFrame = DT * STEPS;
-    if (state.paused || state.gameOver) return;
+    const dtFrame = DT * STEPS * state.timeScale;   // timeScale：减速时间流逝（0.25=慢动作）
+    if (state.gameOver) return;
 
     // 波次生成
     state.spawnTimer += dtFrame;
@@ -201,8 +201,9 @@ const game = (function () {
       if (!s.done && s.t <= state.spawnTimer) { s.done = true; spawnMeteor(state.wave); }
     }
 
-    // 物理推进
-    for (let k = 0; k < STEPS; k++) physics.stepSystem(state.bodies, DT);
+    // 物理推进：子步时长同样乘以 timeScale，星体实际速度才真正变慢（降低难度）
+    const dtSub = DT * state.timeScale;
+    for (let k = 0; k < STEPS; k++) physics.stepSystem(state.bodies, dtSub);
 
     // 触界即消失：任何非母星/非黑洞天体（含玩家放置的）一旦越过画布边缘并正向外飞出，
     // 立即消失（escape）。用"向外飞出"判定，避免刚在边缘外生成、向场内飞来的陨石被误删。
@@ -290,7 +291,7 @@ const game = (function () {
     }
 
     if (state.health <= 0) {
-      state.health = 0; state.gameOver = true; state.paused = true;
+      state.health = 0; state.gameOver = true;
       // 结算：最终得分 = 得分 − 已消耗金钱（建得越多扣得越多，按实际花费比例扣除）
       state.finalScore = Math.max(0, Math.round(state.score - state.spent));
       // 战绩本地存：刷新最高分并标记新纪录
@@ -305,8 +306,8 @@ const game = (function () {
   function renderFrame() {
     render.drawFrame(state.bodies, state);
     // 提示线：用"后台整系统前向 N 体模拟"预测每个星体未来轨迹（与真实积分一致，不飘忽）
-    // 暂停时跳过重算，画面保持静止（不闪动预测线）
-    if (input && state.showHint && !state.paused) {
+    // 减速时仍正常重算，让玩家从容布防
+    if (input && state.showHint) {
       const now = performance.now();
       if (!state.hintCache || now >= state.hintNext) {
         const res = predictor.simulateFuture(state.bodies,

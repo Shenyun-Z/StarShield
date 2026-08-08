@@ -17,6 +17,10 @@
   let ctx = null;
   let enabled = true;
 
+  // 读取本地音效开关（file:// 下个别浏览器可能限制，try 兜底）
+  try { enabled = localStorage.getItem('starshield_audio') !== 'off'; }
+  catch (e) { enabled = true; }
+
   // 创建 AudioContext（仅一次）
   function init() {
     if (ctx || !enabled) return;
@@ -72,6 +76,16 @@
     src.start(t0); src.stop(t0 + dur);
   }
 
+  // 音效开关：关闭时不创建/播放任何声音，状态本地持久化
+  function setEnabled(on) {
+    enabled = !!on;
+    try { localStorage.setItem('starshield_audio', on ? 'on' : 'off'); }
+    catch (e) {}
+    if (on) init();                       // 重新开启时确保 AudioContext 就绪
+  }
+
+  function isEnabled() { return enabled; }
+
   function play(name) {
     if (!enabled) return;
     init();
@@ -98,6 +112,7 @@
     }
   }
 
-  const audio = { init: init, unlock: unlock, play: play };
+  const audio = { init: init, unlock: unlock, play: play,
+                  setEnabled: setEnabled, isEnabled: isEnabled };
   global.audio = audio;
 })(typeof window !== 'undefined' ? window : globalThis);
