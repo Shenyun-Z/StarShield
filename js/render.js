@@ -6,6 +6,28 @@
 const render = (function () {
   let ctx, canvas;
   let bgStars = [];
+  // 视图缩放：逻辑坐标(960x600) → 设备像素（含 DPR），由 game.resize 设置
+  let viewSX = 1, viewSY = 1;
+
+  // 由 game 在初始化/窗口缩放时调用：scale=CSS 像素/逻辑单位，dpr=设备像素比
+  function configureView(scale, dpr) {
+    viewSX = scale * (dpr || 1);
+    viewSY = scale * (dpr || 1);
+  }
+
+  // 窗口尺寸/比例变化时重建背景星空，覆盖新的世界范围（canvas 未就绪时安全跳过）
+  function regenerateStars() {
+    if (!canvas) return;
+    bgStars = [];
+    for (let i = 0; i < 120; i++) {
+      bgStars.push({
+        x: Math.random() * game.W,
+        y: Math.random() * game.H,
+        r: Math.random() * 1.2 + 0.2,
+        a: Math.random() * 0.5 + 0.2
+      });
+    }
+  }
 
   function initRender(c) {
     canvas = c;
@@ -13,8 +35,8 @@ const render = (function () {
     bgStars = [];
     for (let i = 0; i < 120; i++) {
       bgStars.push({
-        x: Math.random() * c.width,
-        y: Math.random() * c.height,
+        x: Math.random() * game.W,
+        y: Math.random() * game.H,
         r: Math.random() * 1.2 + 0.2,
         a: Math.random() * 0.5 + 0.2
       });
@@ -199,10 +221,13 @@ const render = (function () {
   }
 
   function drawFrame(bodies, state) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const W = game.W, H = game.H;
+    // 适配分辨率：把逻辑坐标映射到设备像素（缩放 + DPR 高清），后续绘制均用逻辑尺寸
+    ctx.setTransform(viewSX, 0, 0, viewSY, 0, 0);
+    ctx.clearRect(0, 0, W, H);
     // 背景
     ctx.fillStyle = '#05060f';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, W, H);
     ctx.save();
     for (const s of bgStars) {
       ctx.fillStyle = 'rgba(255,255,255,' + s.a + ')';
@@ -210,9 +235,9 @@ const render = (function () {
     }
     ctx.restore();
 
-    // 屏震
+    // 屏震（暂停/结束时冻结，否则每帧随机抖动会让静止画面看起来在"反复播放"）
     ctx.save();
-    if (state.shake > 0) {
+    if (state.shake > 0 && !state.paused && !state.gameOver) {
       const s = state.shake;
       ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
     }
@@ -227,38 +252,38 @@ const render = (function () {
     if (state.gameOver) {
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#fff';
       ctx.textAlign = 'center';
       ctx.font = '42px "Segoe UI", sans-serif';
-      ctx.fillText('游戏结束', canvas.width / 2, canvas.height / 2 - 20);
+      ctx.fillText('游戏结束', W / 2, H / 2 - 20);
       ctx.font = '20px "Segoe UI", sans-serif';
       ctx.fillText('到达波次: ' + state.wave,
-                   canvas.width / 2, canvas.height / 2 + 20);
+                   W / 2, H / 2 + 20);
       ctx.font = '15px "Segoe UI", sans-serif';
       ctx.fillText('撞毁 ' + (state.destroyed || 0) + '   ·   吸入 ' + (state.captured || 0),
-                   canvas.width / 2, canvas.height / 2 + 46);
+                   W / 2, H / 2 + 46);
       ctx.fillText('得分 ' + state.score + '  −  已花费 ' + state.spent,
-                   canvas.width / 2, canvas.height / 2 + 72);
+                   W / 2, H / 2 + 72);
       ctx.font = '26px "Segoe UI", sans-serif';
       ctx.fillStyle = '#ffd54a';
       ctx.fillText('最终得分: ' + state.finalScore,
-                   canvas.width / 2, canvas.height / 2 + 106);
+                   W / 2, H / 2 + 106);
       ctx.font = '15px "Segoe UI", sans-serif';
       ctx.fillText('最高分: ' + (state.best || 0),
-                   canvas.width / 2, canvas.height / 2 + 136);
+                   W / 2, H / 2 + 136);
       if (state.newRecord) {
         ctx.font = '22px "Segoe UI", sans-serif';
         ctx.fillStyle = '#ffd54a';
-        ctx.fillText('★ 新纪录！', canvas.width / 2, canvas.height / 2 + 166);
+        ctx.fillText('★ 新纪录！', W / 2, H / 2 + 166);
       }
       ctx.fillStyle = '#fff';
       ctx.font = '18px "Segoe UI", sans-serif';
-      ctx.fillText('点击右侧"重新开始"再来一局',
-                   canvas.width / 2, canvas.height / 2 + (state.newRecord ? 196 : 166));
+      ctx.fillText('点击「重新开始」再来一局',
+                   W / 2, H / 2 + (state.newRecord ? 196 : 166));
       ctx.restore();
     }
   }
 
-  return { initRender, drawFrame, colorBySpeed, drawHUD, drawFloaters };
+  return { initRender, configureView, regenerateStars, drawFrame, colorBySpeed, drawHUD, drawFloaters };
 })();

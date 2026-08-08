@@ -4,7 +4,9 @@
  * 严格对接 PLAN.md 第8节接口契约，调用 physics / predictor / render。
  * ========================================================================= */
 const game = (function () {
-  const W = 960, H = 600;
+  let W = 960, H = 600;            // 逻辑世界尺寸：开局前按屏幕宽高比自动确定（铺满屏幕）
+  const REF = 600;                 // 较短边基准，保证不同屏幕下星体视觉大小一致
+  let worldLocked = false;         // 开局后锁定世界尺寸，避免中途缩放打乱已有星体
   const STEPS = 2;                 // 每帧物理子步数（DT*STEPS ≈ 帧时长）
   const DT = physics.DT;
 
@@ -303,7 +305,8 @@ const game = (function () {
   function renderFrame() {
     render.drawFrame(state.bodies, state);
     // 提示线：用"后台整系统前向 N 体模拟"预测每个星体未来轨迹（与真实积分一致，不飘忽）
-    if (input && state.showHint) {
+    // 暂停时跳过重算，画面保持静止（不闪动预测线）
+    if (input && state.showHint && !state.paused) {
       const now = performance.now();
       if (!state.hintCache || now >= state.hintNext) {
         const res = predictor.simulateFuture(state.bodies,
@@ -366,10 +369,38 @@ const game = (function () {
     renderFrame();
   }
 
+  // 分辨率/比例适配：
+  //  · 开局前按舞台容器宽高比确定逻辑世界(W×H)，使画布铺满屏幕、无黑边；
+  //    较短边固定为 REF，保证不同屏幕下星体视觉大小一致（游戏平衡不受比例影响）。
+  //  · 内部画布按显示尺寸×设备像素比(DPR)放大，保证高清。
+  //  · 开局后 worldLocked=true，窗口缩放只做等比"包含"缩放（可能留黑边），不改动世界。
+  function resize() {
+    const stage = document.querySelector('.stage');
+    const availW = (stage && stage.clientWidth) ? stage.clientWidth : (window.innerWidth - 320);
+    const availH = (stage && stage.clientHeight) ? stage.clientHeight : (window.innerHeight - 36);
+    const ar = availW / availH;
+
+    if (!worldLocked) {
+      // 让世界宽高比 = 屏幕宽高比 → 均匀缩放即可铺满
+      if (ar >= 1) { W = Math.round(REF * ar); H = REF; }   // 横屏：高度固定
+      else         { W = REF; H = Math.round(REF / ar); }   // 竖屏：宽度固定
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const scale = Math.min(availW / W, availH / H) || 1;      // 均匀缩放（开局=铺满；锁后=包含）
+    canvas.style.width = (W * scale) + 'px';
+    canvas.style.height = (H * scale) + 'px';
+    canvas.width = Math.round(W * scale * dpr);             // 设备像素（高清）
+    canvas.height = Math.round(H * scale * dpr);
+    render.configureView(scale, dpr);
+    if (render.regenerateStars) render.regenerateStars();
+  }
+
   function init() {
     canvas = document.getElementById('game');
-    canvas.width = W; canvas.height = H;
-    ctx = render.initRender(canvas);
+    resize();                            // 先按屏幕确定世界尺寸 W/H（铺满）
+    ctx = render.initRender(canvas);     // 再生成星空(正确 W/H) 并配置渲染上下文
+    window.addEventListener('resize', resize);
     predictorRenderer.attach(canvas);
 
     // 读取本地最高分（file:// 下个别浏览器可能限制，try 兜底）
@@ -385,10 +416,11 @@ const game = (function () {
     state.bodies.push(star);
 
     startWave(1);
+    worldLocked = true;                  // 开局后锁定世界比例，窗口缩放只等比缩放显示
     requestAnimationFrame(loop);
   }
 
-  return { init, state, TIERS, W, H, NO_HOLE_MARGIN, SCORE };
+  return { init, state, TIERS, NO_HOLE_MARGIN, SCORE, get W(){ return W; }, get H(){ return H; } };
 })();
 
 // 入口（脚本置于 body 末尾，DOM 已就绪）

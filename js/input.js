@@ -17,9 +17,10 @@ const input = (function () {
 
   function toCanvas(e) {
     const r = canvas.getBoundingClientRect();
+    // 画布显示尺寸已按分辨率缩放，需把屏幕坐标映射回逻辑世界（960x600）
     return {
-      x: (e.clientX - r.left) * (canvas.width / r.width),
-      y: (e.clientY - r.top) * (canvas.height / r.height)
+      x: (e.clientX - r.left) * (game.W / r.width),
+      y: (e.clientY - r.top) * (game.H / r.height)
     };
   }
 
@@ -61,16 +62,21 @@ const input = (function () {
     api.path = api.risk.path;   // 使用按碰撞点截断后的轨迹，避免画穿天体
   }
 
+  // 统一用 Pointer Events：鼠标 / 触摸 / 笔 同一套逻辑，手机可直接拖拽摆放星体
   function onDown(e) {
     audio.unlock();              // 首次用户交互解锁音频（浏览器自动播放策略）
-    if (e.button !== 0) return;
     if (game.state.gameOver) return;
+    if (e.button !== undefined && e.button !== 0) return;   // 仅主键（左键/触摸/笔触）
     const p = toCanvas(e);
     api.dragging = true;
     api.sx = p.x; api.sy = p.y; api.mx = p.x; api.my = p.y;
     api.smx = p.x; api.smy = p.y;   // 平滑坐标与起点一致，避免初始跳变
     api.lastPredict = 0;
     refreshPrediction();
+    // 捕获指针：拖出画布范围也能持续收到 move/up，触摸拖拽更顺滑
+    if (canvas.setPointerCapture && e.pointerId !== undefined) {
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    }
     e.preventDefault();
   }
 
@@ -78,15 +84,19 @@ const input = (function () {
     if (!api.dragging) return;
     const p = toCanvas(e);
     api.mx = p.x; api.my = p.y;
-    // 指数滤波去抖：平滑坐标缓慢跟随真实鼠标，抑制高频微抖引起的线端跳动
+    // 指数滤波去抖：平滑坐标缓慢跟随真实指针，抑制高频微抖引起的线端跳动
     api.smx += (p.x - api.smx) * 0.35;
     api.smy += (p.y - api.smy) * 0.35;
     refreshPrediction();
+    e.preventDefault();
   }
 
   function onUp(e) {
     if (!api.dragging) return;
     api.dragging = false;
+    if (canvas.releasePointerCapture && e.pointerId !== undefined) {
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
 
     const tier = game.TIERS[game.state.currentTier];
     const v = ghostVelocity();
@@ -139,9 +149,10 @@ const input = (function () {
   function init() {
     canvas = document.getElementById('game');
 
-    canvas.addEventListener('mousedown', onDown);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    canvas.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
 
     document.querySelectorAll('[data-tier]').forEach(b => {
       b.addEventListener('click', () => selectTier(b.dataset.tier));

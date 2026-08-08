@@ -12,12 +12,22 @@ body {
 
 .wrap {
   display: flex;
+  width: 100%;
   gap: 18px;
   padding: 18px;
   align-items: flex-start;
+  height: 100vh;
+  box-sizing: border-box;
 }
 
+/* 舞台随窗口自适应：宽屏占据剩余空间，画布由 JS 按容器比例铺满；窄屏改为竖排 */
 .stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(100vh - 36px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #05060f;
   border: 1px solid #1b2440;
   border-radius: 10px;
@@ -25,14 +35,32 @@ body {
   box-shadow: 0 0 40px rgba(40, 90, 200, 0.15);
 }
 
-canvas { display: block; cursor: crosshair; }
+canvas { display: block; cursor: crosshair; touch-action: none; }
 
 .panel {
+  flex: 0 0 260px;
   width: 260px;
   background: #0c1124;
   border: 1px solid #1b2440;
   border-radius: 10px;
   padding: 16px;
+}
+
+/* 窄屏（手机/竖屏）：面板移到上方，画布占据剩余高度，世界比例随容器自适应铺满 */
+@media (max-width: 760px) {
+  .wrap {
+    flex-direction: column;
+    height: 100vh;
+  }
+  .panel {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .stage {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+  }
 }
 
 .panel h1 { font-size: 22px; letter-spacing: 2px; color: #ffd54a; }
