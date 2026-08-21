@@ -108,12 +108,18 @@
         // 两个不可动天体（如两个黑洞）互不作用
         if (a.immovable && b.immovable) continue;
 
-        // 不可动大质量天体（黑洞）：吞掉撞上来的运动天体，自身保持不动
+        // 不可动大质量天体（黑洞 / 母星）：吞掉撞上来的运动天体
         if (a.immovable || b.immovable) {
-          const other = a.immovable ? b : a;
-          if (other.isStar) continue;   // 母星受保护，不可被黑洞吞噬
-          other.dead = true;
-          other.captured = true;
+          const mover = a.immovable ? b : a;   // 运动天体（撞上来的）
+          const anchor = a.immovable ? a : b;  // 不可动天体（母星 / 黑洞）
+          if (anchor.isStar) {
+            // 运动天体撞母星：母星扣血，而非被吞噬
+            mover.dead = true;
+            mover.hitStar = true;
+          } else {
+            mover.dead = true;
+            mover.captured = true;
+          }
           continue;
         }
 

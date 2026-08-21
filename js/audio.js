@@ -107,6 +107,10 @@
       case 'flee': // 飞出：轻盈上滑 pip
         tone({ type: 'sine', f0: 880, f1: 1320, dur: 0.14, gain: 0.10 });
         break;
+      case 'gameover': // 失败：低频持续下滑
+        tone({ type: 'sawtooth', f0: 220, f1: 50, dur: 1.10, gain: 0.22 });
+        noiseBurst(0.6, 0.18);
+        break;
       default:
         break;
     }

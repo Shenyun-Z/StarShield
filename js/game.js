@@ -1,428 +1,980 @@
-/* =========================================================================
- * game.js  —— 成员3（交互/游戏系统 · 协调者）核心文件
- * 职责：主循环 + 游戏规则（波次/得分/血量/收集环/关卡状态机）
- * 严格对接 PLAN.md 第8节接口契约，调用 physics / predictor / render。
- * ========================================================================= */
-const game = (function () {
-  let W = 960, H = 600;            // 逻辑世界尺寸：开局前按屏幕宽高比自动确定（铺满屏幕）
-  const REF = 600;                 // 较短边基准，保证不同屏幕下星体视觉大小一致
-  let worldLocked = false;         // 开局后锁定世界尺寸，避免中途缩放打乱已有星体
-  const STEPS = 2;                 // 每帧物理子步数（DT*STEPS ≈ 帧时长）
-  const DT = physics.DT;
+(function () {
+  'use strict';
 
-  // 星体档位（半径 ∝ ∛质量，档位越高星体越大）
-  // 成本经过重估：小天体便宜且撞击效率高（薄拦截）；大/恒星贵但覆盖大、引力强（区域控制）；
-  // 黑洞最贵且限时，是“战略 AoE”，需捕获≥2 颗陨石才回本（详见 SCORE）。
-  const TIERS = {
-    small:     { mass: 50,   cost: 3 },                           // 撞击为主：便宜，可成排拦截
-    medium:    { mass: 200,  cost: 6 },                           // 撞击为主，略带引力
-    large:     { mass: 600,  cost: 12 },                          // 撞击 + 引力（可撕裂陨石）
-    star:      { mass: 1500, cost: 20 },                          // 撞击 + 强引力 + 撕裂（大范围控制）
-    blackhole: { mass: 6000, cost: 30, immovable: true, lifespan: 12 }  // 纯引力·静止·限时12s：明显弯曲所有非母星轨道
-  };
-  const METEOR_MASS = 1;
+  // ===== 常量 =====
+  const DT = 1 / 60;
+  const STEPS = 1;
+  const BASE_HEALTH = 20;
+  // 母星与玩家星体之间最小距离（半径 + 缓冲）。
+  // 必须与 input.js 的 isInsidePlanet 使用同一个值，避免判定不一致。
+  const PLANET_FORBIDDEN_PAD = 34;     // px
+  const PLANET_FORBIDDEN_RADIUS = () =>
+    state.bodies[0] ? state.bodies[0].radius + PLANET_FORBIDDEN_PAD : 64;
 
-  // —— 得分规则（固定分，不叠加连击）——
-  // 重估后：撞毁 > 吸入 > 安全飞出；最终得分 = 得分 − 已花费，逼玩家权衡“建造投入 vs 防守收益”。
-  //   destroy: 25 每颗陨石撞毁（越小越便宜的星体边际收益越高，鼓励薄拦截）
-  //   capture: 20 黑洞每吞噬 1 颗（黑洞 cost=30，需吞 ≥2 颗才回本，限制铺满黑洞刷分）
-  //   escape:   8 陨石被引力弹弓甩出边界（被动防守，少量分）
-  const SCORE = {
-    destroy: 25,
-    capture: 20,
-    escape:  8
-  };
+  // ===== 关卡定义 =====
+  // 生存模式用 SURVIVAL_LEVELS 中的某一个作为起始，循环复用（共享同一关卡池）
+  // 闯关模式按 idx 逐关解锁：需通关前一关才能开启下一关（保存在 localStorage）
+  const SURVIVAL_LEVELS = [
+    {
+      id: 'sv-1', name: '和平年代', desc: '空白试炼，60秒攒分',
+      intro: '宁静星海，母星孤悬。在 60 秒限时内熟悉引力布防，尽可能多地拦截来袭陨石。',
+      objective: '存活 60 秒，尽可能多地拦截来袭威胁',
+      failCondition: '母星生命值（20 点）归零',
+      health: 20, budget: 99999, duration: 60,
+      scene: { blackholes: [] },                          // 修正：默认无黑洞
+      waves: { startInterval: 2.0, endInterval: 0.7, intervalDrop: 0.04,
+               startDifficulty: 0.30, endDifficulty: 1.0, difficultyRamp: 0.025,
+               startCount: 3, endCount: 12, countRamp: 0.25 },
+      rewards: { clearStar: 0, clearBlackhole: 1 },
+    },
+    {
+      id: 'sv-2', name: '引力试炼', desc: '更难，更多陨石',
+      intro: '来袭更密更快。90 秒限时内需更高效地布防，在引力试炼中证明你的防守功底。',
+      objective: '存活 90 秒，坚持越久得分越高',
+      failCondition: '母星生命值（18 点）归零',
+      health: 18, budget: 99999, duration: 90,
+      scene: { blackholes: [] },
+      waves: { startInterval: 1.6, endInterval: 0.5, intervalDrop: 0.05,
+               startDifficulty: 0.40, endDifficulty: 1.0, difficultyRamp: 0.022,
+               startCount: 4, endCount: 14, countRamp: 0.28 },
+      rewards: { clearStar: 0, clearBlackhole: 1 },
+    },
+    {
+      id: 'sv-3', name: '星界危机', desc: '极限节奏，120秒',
+      intro: '高压极限节奏，120 秒内高频来袭。多目标同屏，需冷静布局方能守住母星。',
+      objective: '存活 120 秒，应对高频高难来袭',
+      failCondition: '母星生命值（15 点）归零',
+      health: 15, budget: 99999, duration: 120,
+      scene: { blackholes: [] },
+      waves: { startInterval: 1.2, endInterval: 0.4, intervalDrop: 0.05,
+               startDifficulty: 0.45, endDifficulty: 1.0, difficultyRamp: 0.018,
+               startCount: 5, endCount: 16, countRamp: 0.30 },
+      rewards: { clearStar: 0, clearBlackhole: 1 },
+    },
+  ];
+  // 闯关模式关卡：使用 levels-campaign.js 提供的确定性配置（保证公平、可复现、
+  // 层层递进）。所有用户加载同一份数据将得到完全一致的波次序列。
+  const CAMPAIGN_LEVELS = (typeof window !== 'undefined' && window.CAMPAIGN_LEVELS)
+    ? window.CAMPAIGN_LEVELS
+    : (typeof window !== 'undefined' && window.EXTREME_LEVELS ? window.EXTREME_LEVELS : []);
 
-  // 黑洞不可放置在母星周围的禁放半径（含母星半径 + 黑洞半径 + 安全余量）
-  const NO_HOLE_MARGIN = 60;
-
-  let canvas, ctx, star;
-
+  // ===== 全局状态 =====
   const state = {
-    bodies: [], star: null,
-    score: 0, health: 100, spent: 0, finalScore: 0,   // spent=已消耗金钱（不限制建造总数）
-    best: 0, newRecord: false,                // 本地最高分 / 本局是否破纪录
-    destroyed: 0, captured: 0,                // 撞毁(撞击/撕裂) / 吸入(黑洞吞噬) 的陨石计数
-    fx: [],                                   // 爆炸特效（粒子/冲击波/闪光）
-    floaters: [],                             // 飘字（+分数 / -血量）浮动文字
-    wave: 0, timeScale: 1,
-    shake: 0, showPrediction: true, showHint: true,
-    hintCache: null, hintNext: 0, hintSampleDt: 0,
-    currentTier: 'small',
-    waveActive: false, spawnList: [], spawnTimer: 0, nextWaveTimer: 0,
-    gameOver: false
+    bodies: [],
+    particles: [],
+    screenShake: 0,
+    shake: 0,
+    health: BASE_HEALTH,
+    budget: 0,
+    score: 0,
+    wave: 0,
+    mode: 'survival',
+    level: null,
+    levelIndex: 0,
+    timeScale: 1,
+    gameOver: false,
+    showHint: true,
+    comets: 0,
+    asteroids: 0,
+    starsPlaced: 0,
+    asteroidsCleared: 0,
+    hitCount: 0,        // 母星累计受击
+    totalSpent: 0,      // 本局星能花费
+    difficulty: 0.3,    // 当前波次难度系数（用于计分加权）
+    gameStarted: false,
+    spawnAccumulator: 0,
+    waveActive: false,
+    waveQueue: [],
+    waveTimer: 0,
+    healthFlash: 0,
+    // 碰撞动画
+    shockwaves: [],         // { x, y, radius, maxRadius, life, maxLife, color }
+    flashRed: 0,            // 0~1，兼容旧调用
+    flashes: [],            // { color, life, maxLife, intensity }
+    planetPunch: 0,         // 母星受击震缩 0~1，>0 时缩放抖动
+    // 生存模式限时
+    duration: 0,            // 0 表示无限；>0 表示秒数
+    remainingTime: 0,       // 剩余秒数（生存模式）
+  };
+  let bestScore = 0, bestWaves = 0;
+  let campaignUnlocked = 0;   // 已解锁的最大关卡索引（成就：通关到「第 N 关」）
+
+  // ===== 工具 =====
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  // ===== 本地战绩 / 进度 =====
+  const LS_KEYS = [
+    'starshield_best_score', 'starshield_best_waves',
+    'starshield_setup', 'starshield_campaign_unlocked', 'starshield_audio',
+  ];
+  function loadBest() {
+    try {
+      bestScore = parseInt(localStorage.getItem('starshield_best_score') || '0', 10) || 0;
+      bestWaves = parseInt(localStorage.getItem('starshield_best_waves') || '0', 10) || 0;
+      campaignUnlocked = parseInt(localStorage.getItem('starshield_campaign_unlocked') || '0', 10) || 0;
+    } catch (e) { bestScore = 0; bestWaves = 0; campaignUnlocked = 0; }
+  }
+  function saveBest() {
+    try {
+      localStorage.setItem('starshield_best_score', String(bestScore));
+      localStorage.setItem('starshield_best_waves', String(bestWaves));
+      localStorage.setItem('starshield_campaign_unlocked', String(campaignUnlocked));
+    } catch (e) {}
+  }
+  // 一键清除进度：删除本游戏写入的全部 localStorage 键（各层级通用）
+  function clearAllProgress() {
+    try {
+      for (const k of LS_KEYS) localStorage.removeItem(k);
+    } catch (e) {}
+    bestScore = 0; bestWaves = 0; campaignUnlocked = 0;
+    // 重新加载菜单时由调用方负责刷新显示
+  }
+  // 整数化总分：由四类计分明细（各自取整）代数求和推导，保证与结算面板明细严格一致、
+  // 始终为整数（消除生存存活分浮点累加导致的显示漂移）。
+  function integerScore() {
+    return Math.max(0,
+      Math.round(state.scoreIntercept)
+      + Math.round(state.scoreWaveBonus)
+      + Math.round(state.scoreSurvive)
+      - Math.round(state.scorePenalty));
+  }
+  function updateBest() {
+    if (state.mode === 'campaign') {
+      // 闯关模式的「成就」= 已通关到第几关（最高解锁索引 + 1），不记录波次
+      // 仅在通关时由 unlockNextLevel() 推进 campaignUnlocked
+    } else {
+      const rounded = integerScore();
+      if (rounded > bestScore) bestScore = rounded;
+    }
+    saveBest();
+  }
+  // 通关当前关：解锁下一关（仅闯关模式）
+  function unlockNextLevel() {
+    if (state.mode !== 'campaign') return;
+    const next = state.levelIndex + 1;
+    if (next > campaignUnlocked) {
+      campaignUnlocked = next;
+      saveBest();
+    }
+  }
+  function bestDisplay() {
+    if (state.mode === 'campaign') return campaignUnlocked > 0 ? ('通关第 ' + campaignUnlocked + ' 关') : '未通关';
+    return bestScore > 0 ? String(Math.round(bestScore)) : '—';
+  }
+  function bestForMode(mode) {
+    return mode === 'campaign' ? campaignUnlocked : Math.round(bestScore);
+  }
+  // 关卡是否解锁（闯关模式：索引 <= 已解锁上限）
+  function isLevelUnlocked(idx) {
+    return idx <= campaignUnlocked;
+  }
+
+  // ===== 关卡初始化 =====
+  function setupLevel() {
+    const W = window.innerWidth, H = window.innerHeight;
+    const cx = W / 2, cy = H / 2;
+    const lvl = state.level;
+    state.bodies = [];
+    state.particles = [];
+    state.shake = 0;
+    state.screenShake = 0;
+    state.score = 0;
+    state.wave = 0;
+    state.endReason = null;
+    state.comets = 0;
+    state.asteroids = 0;
+    state.starsPlaced = 0;
+    state.asteroidsCleared = 0;
+    state.hitCount = 0;
+    state.totalSpent = 0;
+    state.difficulty = 0.3;
+    state.lastWaveBonus = 0;
+    // 分数明细（用于结算面板分账展示）
+    state.scoreIntercept = 0;   // 拦截清除累计
+    state.scoreWaveBonus = 0;   // 波次奖励累计
+    state.scoreSurvive = 0;     // 生存存活累计
+    state.scorePenalty = 0;     // 失守扣分累计（正数）
+    state.gameOver = false;
+    state.waveActive = false;
+    state.waveQueue = [];
+    state.waveTimer = 0;
+    state.waveInterval = 0;
+    state.spawnAccumulator = 0;
+    state.spawnTimer = 0;
+    state.healthFlash = 0;
+
+    state.health = lvl.health;
+    state.budget = lvl.budget;
+
+    // 限时（生存模式）
+    state.duration = lvl.duration || 0;
+    state.remainingTime = state.duration;
+
+    // 碰撞动画清空
+    state.shockwaves = [];
+    state.flashRed = 0;
+    state.flashes = [];
+    state.planetPunch = 0;
+
+    // 母星
+    state.bodies.push({
+      type: 'planet', mass: 8000, radius: 30,
+      x: cx, y: cy, vx: 0, vy: 0,
+      immovable: true, anchored: true, isStar: true,
+    });
+
+    // 注意：黑洞不再作为关卡初始场景放置（用户要求开局画布无黑洞）。
+    // 黑洞仅由玩家在游戏中放置，且放置后固定位置、10 秒后自动消失。
+  }
+
+  function applySavedSetup() {
+    try {
+      const raw = localStorage.getItem('starshield_setup');
+      if (!raw) return false;
+      const saved = JSON.parse(raw);
+      if (!Array.isArray(saved) || saved.length === 0) return false;
+      const now = performance.now();
+      for (const s of saved) {
+        const isBH = s.type === 'blackhole';
+        const body = {
+          type: isBH ? 'blackhole' : 'star',
+          mass: s.mass || 300, radius: s.radius || 14,
+          x: s.x, y: s.y, vx: 0, vy: 0,
+          isCollectable: true, placedType: s.type || 'star',
+          placedAt: now,
+        };
+        if (isBH) {
+          // 沿用的玩家黑洞：锚定 + 10秒后消失（重新计时）
+          body.anchored = true;
+          body.immovable = true;
+          body.expiresAt = now + 10000;
+          body.fading = false;
+        }
+        state.bodies.push(body);
+        state.budget -= (s.mass || 300);
+        state.totalSpent += (s.mass || 300);
+        state.starsPlaced++;
+      }
+      state.budget = Math.max(0, state.budget);
+      return true;
+    } catch (e) { return false; }
+  }
+  function saveSetup() {
+    try {
+      const stars = state.bodies
+        .filter(b => b.type === 'star' || b.type === 'blackhole')
+        .filter(b => !b.anchored)              // 只保存玩家放置的
+        .map(b => ({ x: b.x, y: b.y, type: b.type, mass: b.mass, radius: b.radius }));
+      localStorage.setItem('starshield_setup', JSON.stringify(stars));
+    } catch (e) {}
+  }
+
+  // ===== 母星禁放区 =====
+  // 唯一权威实现：input.js 也调用此函数
+  function canPlaceAt(p) {
+    const planet = state.bodies[0];
+    if (!planet) return true;
+    return Math.hypot(p.x - planet.x, p.y - planet.y) >= PLANET_FORBIDDEN_RADIUS();
+  }
+
+  // ===== 星体档位 =====
+  const STAR_TYPES = {
+    small:   { name: '小行星', mass: 50,  radius: 9,  cost: 50 },
+    mid:     { name: '中行星', mass: 150, radius: 13, cost: 150 },
+    large:   { name: '大行星', mass: 300, radius: 17, cost: 300 },
+    star:    { name: '恒星',   mass: 500, radius: 20, cost: 500 },
+    blackhole: { name: '黑洞', mass: 1500, radius: 11, cost: 1500 },
   };
 
-  // ---- 关卡/波次 ----
-  function startWave(n) {
-    state.wave = n;
-    state.spawnList = [];
+  function placeStar(typeKey, p, opts) {
+    const def = STAR_TYPES[typeKey] || STAR_TYPES.mid;
+    if (state.budget < def.cost) return { ok: false, reason: '星能不足' };
+    if (!canPlaceAt(p)) return { ok: false, reason: '离母星太近' };
+    state.budget -= def.cost;
+    state.totalSpent += def.cost;
+    const isBH = typeKey === 'blackhole';
+    const vx = (opts && Number.isFinite(opts.vx)) ? opts.vx : 0;
+    const vy = (opts && Number.isFinite(opts.vy)) ? opts.vy : 0;
+    if (isBH) {
+      // 玩家黑洞：固定位置（不随引力移动），10秒后自动消失
+      state.bodies.push({
+        type: 'blackhole', mass: def.mass, radius: def.radius,
+        x: p.x, y: p.y, vx: 0, vy: 0,
+        anchored: true,                                  // 锚定，不被引力推动
+        immovable: true,                                 // 物理上不动；撞来的被吞
+        isCollectable: true, placedType: typeKey,
+        placedAt: performance.now(),
+        expiresAt: performance.now() + 10000,            // 10s 后消失
+        fading: false,                                   // 即将消失动画中
+      });
+    } else {
+      state.bodies.push({
+        type: 'star', mass: def.mass, radius: def.radius,
+        x: p.x, y: p.y, vx, vy,
+        isCollectable: true, placedType: typeKey,
+      });
+    }
+    state.starsPlaced++;
+    return { ok: true };
+  }
+
+  // ===== 随机波次生成 =====
+  // difficulty: 0~1，随 wave 在关卡定义的区间内插值（仅生存模式使用随机生成）
+  function waveParams() {
+    const w = state.wave;
+    const cfg = state.level.waves;
+    // 难度随 wave 在 [startDifficulty, endDifficulty] 区间线性插值，封顶 wave 数量由 difficultyRamp 推断
+    const t = clamp(w * cfg.difficultyRamp, 0, 1);
+    const difficulty = lerp(cfg.startDifficulty, cfg.endDifficulty, t);
+    const interval = lerp(cfg.startInterval, cfg.endInterval, t);
+    const count = Math.round(lerp(cfg.startCount, cfg.endCount, t) + randInt(-1, 1));
+    return { difficulty, interval: clamp(interval, 0.4, 3.0), count: clamp(count, 3, 16) };
+  }
+
+  // 极限模式：从确定性关卡配置中按波次索引直接取波次（无随机）
+  function generateWaveDeterministic() {
+    const arr = state.level.waves;
+    const idx = state.wave - 1;
+    if (idx < 0 || idx >= arr.length) return null;   // 超出即通关
+    const wv = arr[idx];
+    const queue = wv.spawns.map(s => ({ kind: s.kind, difficulty: wv.difficulty, spawn: s }));
+    return { queue, interval: wv.interval, difficulty: wv.difficulty, isLast: idx === arr.length - 1 };
+  }
+
+  function generateWave() {
+    // 极限模式使用确定性配置
+    if (Array.isArray(state.level.waves)) {
+      return generateWaveDeterministic();
+    }
+    const p = waveParams();
+    const queue = [];
+    const cometRatio = clamp(0.15 + p.difficulty * 0.30, 0.15, 0.5);
+    const cometCount = Math.round(p.count * cometRatio);
+    const asteroidCount = p.count - cometCount;
+    for (let i = 0; i < cometCount; i++) queue.push({ kind: 'comet', difficulty: p.difficulty });
+    for (let i = 0; i < asteroidCount; i++) queue.push({ kind: 'asteroid', difficulty: p.difficulty });
+    for (let i = queue.length - 1; i > 0; i--) {
+      const j = randInt(0, i);
+      [queue[i], queue[j]] = [queue[j], queue[i]];
+    }
+    return { queue, interval: p.interval, difficulty: p.difficulty };
+  }
+
+  function startWave() {
+    state.wave++;
+    const g = generateWave();
+    if (!g) {
+      // 极端模式：已无更多波次（理论上清波时已判通关，这里兜底）
+      state.waveActive = false;
+      return;
+    }
+    const { queue, interval, difficulty } = g;
+    state.difficulty = difficulty;
+    state.waveQueue = queue;
+    state.waveInterval = interval;
     state.waveActive = true;
-    state.spawnTimer = 0;
-    const count = (n === 1) ? 1 : (2 + n);     // 教程关1颗，之后递增
-    const gap = (n === 1) ? 2 : 1.5;
-    for (let i = 0; i < count; i++) {
-      state.spawnList.push({ t: gap * i + 0.5, done: false });
-    }
-    // 预算不再随波次白送，改为靠击毁/吞噬陨石赚回
+    state.spawnAccumulator = 0;
+    // 记录是否最后一波（极端模式通关判定用）
+    state.isLastWave = !!g.isLast;
   }
 
-  function spawnMeteor(n) {
-    const edge = Math.floor(Math.random() * 4);
+  function spawnFromQueue() {
+    if (state.waveQueue.length === 0) return;
+    const item = state.waveQueue.shift();
+    spawnThreat(item);
+  }
+
+  // 生成威胁天体。优先使用确定性配置描述的 {edge, angle, speed, mass, radius}，
+  // 否则（生存模式）回退到随机生成。angle 为来袭方向（指向母星的偏角）。
+  function spawnThreat(item) {
+    const kind = item.kind;
+    const difficulty = item.difficulty || 0;
+    const spawn = item.spawn || null;       // 确定性模式携带的预生成描述
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+
+    let edge, angle, speed, mass, radius;
+    if (spawn) {
+      edge = spawn.edge;
+      angle = spawn.angle;
+      speed = spawn.speed;
+      mass = spawn.mass;
+      radius = spawn.radius;
+    } else {
+      // 生存模式：随机（允许差异，不影响公平性，因生存模式比拼分数而非固定挑战）
+      edge = randInt(0, 3);
+      angle = Math.random() * Math.PI * 2;
+      speed = (kind === 'comet')
+        ? rand(120, 200) * (0.8 + difficulty * 0.6)
+        : rand(60, 110) * (0.8 + difficulty * 0.6);
+      mass = kind === 'comet' ? 30 : (30 + difficulty * 40);
+      radius = kind === 'comet' ? 7 : (13 + difficulty * 6);
+    }
+
+    const margin = 60;
     let x, y;
-    if (edge === 0)      { x = Math.random() * W; y = -20; }
-    else if (edge === 1) { x = W + 20;          y = Math.random() * H; }
-    else if (edge === 2) { x = Math.random() * W; y = H + 20; }
-    else                 { x = -20;             y = Math.random() * H; }
+    if (edge === 0) { x = rand(margin, cx * 2 - margin); y = -margin; }
+    else if (edge === 1) { x = cx * 2 + margin; y = rand(margin, cy * 2 - margin); }
+    else if (edge === 2) { x = rand(margin, cx * 2 - margin); y = cy * 2 + margin; }
+    else { x = -margin; y = rand(margin, cy * 2 - margin); }
 
-    const cx = W / 2, cy = H / 2;
-    let tx = cx, ty = cy;
-    if (n === 1) { tx = cx + 140; ty = cy - 40; }   // 教程：偏移，缓慢飘来
-    else { tx = cx + (Math.random() * 100 - 50); ty = cy + (Math.random() * 100 - 50); }
-
-    const dx = tx - x, dy = ty - y;
-    const d = Math.hypot(dx, dy);
-    const speed = (n === 1) ? 55 : (70 + n * 12);
-    const vx = dx / d * speed, vy = dy / d * speed;
-
-    const m = physics.createBody(METEOR_MASS, x, y, vx, vy, { isMeteorite: true });
-    state.bodies.push(m);
+    // angle 为相对「母星方向」的偏角：基准朝母星，叠加偏角
+    const baseAng = Math.atan2(cy - y, cx - x);
+    const ang = baseAng + (spawn ? angle : (angle - baseAng)); // 生存随机用原始 angle
+    if (spawn) {
+      // 确定性：spread 为相对母星方向的偏角，换算为绝对来袭角
+      const baseAng = Math.atan2(cy - y, cx - x);
+      const ang = baseAng + (spawn.spread || 0);
+      const vx = Math.cos(ang) * speed;
+      const vy = Math.sin(ang) * speed;
+      pushThreatBody(kind, mass, radius, x, y, vx, vy);
+      return;
+    }
+    const vx = Math.cos(ang) * speed;
+    const vy = Math.sin(ang) * speed;
+    pushThreatBody(kind, mass, radius, x, y, vx, vy);
   }
 
-  // ---- 爆炸特效（三种死亡各一套独立动画）----
-  //   explode（撞毁）：橙红中心闪光 + 扩散冲击波 + 碎片四溅
-  //   capture（吸入）：紫色漩涡向内收缩，粒子螺旋被吸入
-  //   escape （离开）：青蓝柔和环扩散 + 轻盈漂浮的雾点
-  function spawnExplosion(b) {
-    const power = Math.max(1, Math.cbrt(b.mass));         // 大星体炸得更大
-    const n = Math.min(40, Math.round(14 + power * 8));   // 粒子数
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const sp = (40 + Math.random() * 160) * power * 0.6;
-      parts.push({
-        x: b.x, y: b.y,
-        vx: b.vx * 0.3 + Math.cos(ang) * sp,
-        vy: b.vy * 0.3 + Math.sin(ang) * sp,
-        r: 1 + Math.random() * 2.2 * power,
-        hue: 20 + Math.random() * 40                       // 橙红-金黄
+  function pushThreatBody(kind, mass, radius, x, y, vx, vy) {
+    if (kind === 'comet') {
+      state.comets++;
+      state.bodies.push({
+        type: 'comet', mass: mass, radius: radius,
+        x, y, vx, vy, trail: [],
+      });
+    } else {
+      state.asteroids++;
+      state.bodies.push({
+        type: 'asteroid', mass: mass, radius: radius,
+        x, y, vx, vy, rotation: rand(0, Math.PI * 2),
+        vertices: Array.from({ length: 9 }, () => rand(0.75, 1.2)),
       });
     }
-    state.fx.push({
-      type: 'explode',
-      x: b.x, y: b.y,
-      age: 0, life: 0.9,                                   // 秒
-      ringMax: 26 + b.radius * 4,                          // 冲击波最大半径
-      parts: parts
+  }
+
+  function clearWave() {
+    state.waveActive = false;
+    state.waveQueue = [];
+    state.spawnAccumulator = 0;
+    // 波次清空奖励：基础 15 + 每波 5 分
+    const wb = 15 + 5 * state.wave;
+    state.score += wb;
+    state.lastWaveBonus = wb;
+    state.scoreWaveBonus += wb;
+  }
+
+  // ===== 撞击动画工具 =====
+  // 在指定位置触发冲击波环（多色支持）
+  function spawnShockwave(x, y, maxRadius, color, life) {
+    state.shockwaves.push({
+      x, y, radius: 0,
+      maxRadius: maxRadius,
+      life: life || 0.4, maxLife: life || 0.4,
+      color: color || 'rgba(255,255,255,0.85)',
     });
-    state.shake = Math.max(state.shake, 6 + power * 3);    // 撞击屏震
   }
-
-  // 吸入（黑洞吞噬 / 黑洞坍缩）：紫色漩涡，粒子螺旋向中心收拢
-  function spawnCapture(b) {
-    const power = Math.max(1, Math.cbrt(b.mass));
-    const baseR = (b.radius || 12) + 14;
-    const n = Math.min(30, Math.round(12 + power * 6));
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      parts.push({
-        ang: Math.random() * Math.PI * 2,
-        r: baseR * (0.4 + Math.random() * 0.8),
-        vr: -(30 + Math.random() * 70),                    // 向内收
-        spin: (3 + Math.random() * 4) * (Math.random() < 0.5 ? 1 : -1),
-        hue: 265 + Math.random() * 35                       // 紫
-      });
-    }
-    state.fx.push({
-      type: 'capture',
-      x: b.x, y: b.y, baseR: baseR,
-      age: 0, life: 0.8,
-      parts: parts
+  // 在指定位置产生屏闪（颜色 + 强度）
+  function addFlash(color, intensity) {
+    state.flashes.push({
+      color: color || 'rgba(255,80,90,0.35)',
+      life: 0.30, maxLife: 0.30,
+      intensity: intensity || 1,
     });
   }
 
-  // 离开画面边界（安全化解）：青蓝柔和环扩散 + 轻盈漂浮雾点
-  function spawnEscape(b) {
-    const power = Math.max(1, Math.cbrt(b.mass));
-    const n = Math.min(22, Math.round(8 + power * 4));
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const sp = 15 + Math.random() * 45;
-      parts.push({
-        x: b.x, y: b.y,
-        vx: Math.cos(ang) * sp,
-        vy: Math.sin(ang) * sp,
-        r: 1 + Math.random() * 2,
-        hue: 180 + Math.random() * 30                       // 青蓝
-      });
+  // 统一结算：一个威胁天体被清除（出界飞离 / 黑洞吞噬 / 星体互撞爆炸）
+  // method ∈ {'flee','blackhole','clash'} 仅用于潜在差异化，当前统一计分
+  function registerClear(body, method) {
+    const difficulty = Number.isFinite(state.difficulty) ? state.difficulty : 0.3;
+    const base = body.type === 'comet'
+      ? 12
+      : 6 + Math.round((body.mass || 40) / 8);
+    // 难度加权：以 0.3 为基准，难度越高分越多
+    const diffMul = 1 + Math.max(0, difficulty - 0.3) * 1.4;
+    // 模式/关卡加权：闯关模式越靠后关卡倍率越高（生存模式恒为 1）
+    const modeMul = state.mode === 'campaign' ? (1 + state.levelIndex * 0.15) : 1;
+    const gain = Math.max(1, Math.round(base * diffMul * modeMul));
+    state.score += gain;
+    state.scoreIntercept += gain;
+    state.asteroidsCleared += 1;
+    // 闯关模式资源回收：每清除一个威胁返还少量星能（替代旧 rewards 硬编码）
+    if (state.mode === 'campaign') {
+      state.budget = Math.min(99999, state.budget + 2);
     }
-    state.fx.push({
-      type: 'escape',
-      x: b.x, y: b.y,
-      age: 0, life: 0.8,
-      parts: parts
-    });
+    return gain;
   }
 
-  function updateFx(dt) {
-    for (const e of state.fx) {
-      e.age += dt;
-      if (e.type === 'capture') {
-        // 吸入：粒子半径向内收、角度旋转（螺旋）
-        for (const p of e.parts) { p.r += p.vr * dt; p.ang += p.spin * dt; }
-      } else {
-        // 撞毁 / 离开：粒子按速度惯性漂移 + 阻尼
-        for (const p of e.parts) {
-          p.x += p.vx * dt; p.y += p.vy * dt;
-          p.vx *= 0.96; p.vy *= 0.96;
-        }
+  // 撞击母星
+  function damagePlanet(byBody) {
+    state.health -= 1;
+    state.hitCount += 1;
+    // 失守惩罚：母星被击中扣 8 分（得分不低于 0）
+    if (state.score > 0) state.score = Math.max(0, state.score - 8);
+    state.scorePenalty += 8;
+    state.healthFlash = 1;
+    state.shake = 14;
+    state.planetPunch = 1;                       // 母星震缩
+    // 母星冲击波环（红）
+    const planet = state.bodies[0];
+    if (planet) {
+      spawnShockwave(planet.x, planet.y, planet.radius + 180,
+                     'rgba(255,120,140,0.85)', 0.45);
+    }
+    addFlash('rgba(255,80,90,0.35)', 1);
+    // 撞击点碎片（更鲜更密）
+    if (byBody) {
+      const color = byBody.type === 'asteroid' ? '#ff7a7a' : '#ffc266';
+      spawnExplosion(byBody.x, byBody.y, color, 24);
+    }
+    audio.play('hit');
+    if (state.health <= 0) {
+      state.health = 0;
+      endGame();
+    }
+  }
+
+  // 黑洞吞任何天体（陨石/彗星/玩家星体）
+  function consumeByBlackhole(victim, blackHole) {
+    // 紫色粒子收缩
+    spawnExplosion(victim.x, victim.y, '#c89bff', 18);
+    // 紫色冲击波环（从黑洞位置）
+    spawnShockwave(blackHole.x, blackHole.y, blackHole.radius + 120,
+                   'rgba(200,155,255,0.85)', 0.40);
+    // 紫色屏闪（轻微）
+    addFlash('rgba(170,120,255,0.22)', 0.6);
+    audio.play('suck');
+  }
+
+  // 玩家星体之间互撞（物理碰撞反弹）
+  function starStarCollision(a, b) {
+    // 蓝色火花
+    spawnExplosion((a.x + b.x) / 2, (a.y + b.y) / 2, '#7fc6ff', 10);
+    audio.play('boom');
+    // 轻微屏震
+    state.shake = Math.max(state.shake, 6);
+  }
+
+  function endGame(reason) {
+    if (state.gameOver) return;
+    state.gameOver = true;
+    state.endReason = reason || 'defeat';    // 'defeat' | 'timeup' | 'win'
+    // 通关当前关：解锁下一关（闯关模式成就推进）
+    if (state.endReason === 'win') unlockNextLevel();
+    updateBest();
+    // 音效：通关/时间到 → 庆祝；母星陨落/防线失守 → gameover
+    audio.play(state.endReason === 'win' ? 'place' : (state.endReason === 'timeup' ? 'place' : 'gameover'));
+    // 立刻保存布防供下次「沿用上次布防」
+    saveSetup();
+    // 结算时：隐藏星体栏 + 控制条（避免误触），HUD 保留背景观感
+    ['starBar', 'controls'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('hidden');
+    });
+    // 通知 input 显示结算面板
+    if (typeof window.__showResult === 'function') {
+      window.__showResult(state.endReason);
+    }
+  }
+
+  // ===== 粒子 =====
+  function spawnExplosion(x, y, color, n) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, Math.PI * 2);
+      const sp = rand(40, 220);
+      state.particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: rand(0.3, 0.8), maxLife: 0.8, color,
+      });
+    }
+  }
+
+  // ===== 主循环步进 =====
+  function stepFrame() {
+    if (state.gameOver || !state.gameStarted) return;
+    const dtFrame = DT * STEPS * state.timeScale;
+
+    if (!state.waveActive) {
+      state.waveTimer += dtFrame;
+      if (state.waveTimer >= 0.5) startWave();
+    } else {
+      state.spawnAccumulator += dtFrame;
+      while (state.spawnAccumulator >= state.waveInterval && state.waveQueue.length > 0) {
+        state.spawnAccumulator -= state.waveInterval;
+        spawnFromQueue();
       }
     }
-    state.fx = state.fx.filter(e => e.age < e.life);
-    // 飘字：向上飘并淡出
-    for (const f of state.floaters) f.age += dt;
-    state.floaters = state.floaters.filter(f => f.age < f.life);
-  }
 
-  // 飘字得分：在 (x,y) 弹出一行文字（如 "+25" / "-12"），向上飘并淡出
-  function addFloater(x, y, text, color) {
-    state.floaters.push({ x: x, y: y, text: text, color: color, age: 0, life: 1.0 });
-  }
-
-  // ---- 每帧逻辑 ----
-  function stepFrame() {
-    const dtFrame = DT * STEPS * state.timeScale;   // timeScale：减速时间流逝（0.25=慢动作）
-    if (state.gameOver) return;
-
-    // 波次生成
-    state.spawnTimer += dtFrame;
-    for (const s of state.spawnList) {
-      if (!s.done && s.t <= state.spawnTimer) { s.done = true; spawnMeteor(state.wave); }
-    }
-
-    // 物理推进：子步时长同样乘以 timeScale，星体实际速度才真正变慢（降低难度）
     const dtSub = DT * state.timeScale;
     for (let k = 0; k < STEPS; k++) physics.stepSystem(state.bodies, dtSub);
 
-    // 触界即消失：任何非母星/非黑洞天体（含玩家放置的）一旦越过画布边缘并正向外飞出，
-    // 立即消失（escape）。用"向外飞出"判定，避免刚在边缘外生成、向场内飞来的陨石被误删。
+    // 彗星尾迹
     for (const b of state.bodies) {
-      if (b.isStar || b.immovable || b.dead) continue;
-      const outX = b.x < 0 || b.x > W;
-      const outY = b.y < 0 || b.y > H;
-      if (outX || outY) {
-        const movingOut = (b.x < 0 && b.vx < 0) || (b.x > W && b.vx > 0) ||
-                          (b.y < 0 && b.vy < 0) || (b.y > H && b.vy > 0);
-        if (movingOut) { b.escaped = true; b.dead = true; }
+      if (b.type === 'comet') {
+        b.trail = b.trail || [];
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 12) b.trail.shift();
       }
     }
 
-    // 黑洞存活时限：到期自动坍缩消失（限制单次放置收益，防止铺满黑洞刷分）
-    for (const b of state.bodies) {
-      if (b.dead || !b.immovable || b.isStar || b.lifespan <= 0) continue;
-      b.age += dtFrame;
-      if (b.age >= b.lifespan) {
-        b.dead = true; b.expired = true;
-        // 坍缩特效（吸入式漩涡，用较小质量生成，避免巨型爆炸）
-        spawnCapture({ x: b.x, y: b.y, radius: b.radius, mass: 500 });
+    // 碰撞 / 出界
+    const planet = state.bodies[0];
+    for (let i = state.bodies.length - 1; i >= 0; i--) {
+      const b = state.bodies[i];
+      if (b.anchored) continue;
+      if (b.type === 'planet') continue;
+      if (b.dead) continue;                   // 已被 physics 标记死亡（黑洞吞噬等）的跳过
+
+      const dx = b.x - planet.x, dy = b.y - planet.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < planet.radius + b.radius) {
+        if (b.type === 'asteroid') {
+          damagePlanet(b);
+          state.bodies.splice(i, 1);
+          continue;
+        } else {
+          damagePlanet(b);
+          state.bodies.splice(i, 1);
+          continue;
+        }
+      }
+
+      const m = 120;
+      if (b.x < -m || b.x > window.innerWidth + m || b.y < -m || b.y > window.innerHeight + m) {
+        // 出界（被引力偏转后飞离）：计入拦截清除
+        registerClear(b, 'flee');
+        state.bodies.splice(i, 1);
       }
     }
 
-    // 计分 + 清理
-    const survivors = [];
-    let meteorsLeft = 0;
-    for (const b of state.bodies) {
-      if (b.dead) {
-        if (b.exploded) {
-          spawnExplosion(b);                                // 撞毁：橙红爆炸
-          audio.play('boom');
-          if (b.isMeteorite) {
-            state.destroyed++; state.score += SCORE.destroy;
-            addFloater(b.x, b.y, '+' + SCORE.destroy, '#ff9e5e');
-          }
+    // 波次结束判定
+    if (state.waveActive && state.waveQueue.length === 0) {
+      const remaining = state.bodies.filter(
+        b => (b.type === 'comet' || b.type === 'asteroid')
+      ).length;
+      if (remaining === 0) {
+        clearWave();
+        // 闯关模式：最后一波清空即通关胜利
+        if (state.mode === 'campaign' && state.isLastWave) {
+          endGame('win');
         }
-        else if (b.captured) {
-          spawnCapture(b);                                  // 吸入：紫色漩涡
-          audio.play('suck');
-          if (b.isMeteorite) {
-            state.captured++; state.score += SCORE.capture;
-            addFloater(b.x, b.y, '+' + SCORE.capture, '#b06bff');
-          }
-        }
-        else if (b.escaped) {
-          spawnEscape(b);                                   // 离开边界：青蓝淡出
-          if (b.isMeteorite) {
-            state.score += SCORE.escape; audio.play('flee');
-            addFloater(b.x, b.y, '+' + SCORE.escape, '#7adcff');
-          }
-        }
-        else if (b.hitStar) {
-          spawnExplosion(b);                                // 撞毁：撞母星爆炸（含扣血）
-          state.health -= 12; state.shake = 16;
-          audio.play('hit');
-          addFloater(b.x, b.y, '-12', '#ff3b3b');
-          if (b.isMeteorite) state.destroyed++;             // 撞毁计数（含撞母星）
-        }
-        else if (b.expired) {
-          spawnCapture({ x: b.x, y: b.y, radius: b.radius, mass: 500 });  // 黑洞坍缩：吸入式
-        }
-        continue;
       }
-      if (b.isMeteorite) meteorsLeft++;
-      if (!b.trail) b.trail = [];
-      b.trail.push({ x: b.x, y: b.y });
-      if (b.trail.length > 30) b.trail.shift();
-      survivors.push(b);
     }
-    state.bodies = survivors;
+
+    // 玩家放置的黑洞吞噬陨石（额外奖励）
+    // 注：这里只计分 + 标记 dead，不播动画（统一由下方 dead 清理块调用 consumeByBlackhole）
+    for (let i = state.bodies.length - 1; i >= 0; i--) {
+      const b = state.bodies[i];
+      if (b.type !== 'asteroid' && b.type !== 'comet') continue;
+      if (b.anchored) continue;
+      if (b.dead) continue;                   // physics.resolveCollisions 已处理过的跳过
+      // 玩家黑洞（非 anchored）也走此路径
+      for (let j = 0; j < state.bodies.length; j++) {
+        const h = state.bodies[j];
+        if (h.type !== 'blackhole') continue;
+        const dxh = b.x - h.x, dyh = b.y - h.y;
+        if (Math.hypot(dxh, dyh) < h.radius + b.radius) {
+          registerClear(b, 'blackhole');
+          b.dead = true;
+          b.captured = true;
+          b.capturedBy = h;                   // 记录哪个黑洞
+          break;
+        }
+      }
+    }
+
+    // 清理被 physics 标记为 dead 的天体（黑洞吞噬、互撞、撞母星等）
+    for (let i = state.bodies.length - 1; i >= 0; i--) {
+      const b = state.bodies[i];
+      if (!b.dead) continue;
+      // 补动画：
+      if (b.hitStar) {
+        // 撞上母星 → 扣血 + 红色受击动画 + 碎片（physics 先标记了 dead，这里补发）
+        damagePlanet(b);
+      } else if (b.exploded && !b.captured) {
+        // 玩家星体互撞 → 蓝色火花
+        starStarCollision(b, b);
+      } else if (b.captured) {
+        // 被黑洞吞：优先使用 capturedBy，找不到则最近黑洞
+        let bh = b.capturedBy;
+        if (!bh || bh.dead) {
+          let nd = Infinity;
+          for (let k = 0; k < state.bodies.length; k++) {
+            const h = state.bodies[k];
+            if (h.type !== 'blackhole') continue;
+            const d = Math.hypot(b.x - h.x, b.y - h.y);
+            if (d < nd) { nd = d; bh = h; }
+          }
+        }
+        if (bh) consumeByBlackhole(b, bh);
+      }
+      state.bodies.splice(i, 1);
+    }
+
+    // 粒子
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+      const p = state.particles[i];
+      p.x += p.vx * dtFrame;
+      p.y += p.vy * dtFrame;
+      p.life -= dtFrame;
+      if (p.life <= 0) state.particles.splice(i, 1);
+    }
+
+    // 冲击波环扩散 + 渐隐
+    for (let i = state.shockwaves.length - 1; i >= 0; i--) {
+      const s = state.shockwaves[i];
+      const t = 1 - (s.life / s.maxLife);
+      s.radius = s.radius + (s.maxRadius - s.radius) * 0.12 + 4;   // 平滑扩张
+      s.life -= dtFrame;
+      if (s.life <= 0) state.shockwaves.splice(i, 1);
+    }
+    // 屏闪渐弱
+    if (state.flashRed > 0) state.flashRed = Math.max(0, state.flashRed - dtFrame * 3);
+    for (let i = state.flashes.length - 1; i >= 0; i--) {
+      state.flashes[i].life -= dtFrame;
+      if (state.flashes[i].life <= 0) state.flashes.splice(i, 1);
+    }
+
+    // 玩家黑洞过期检测 + 消失动画
+    const tnow = performance.now();
+    for (let i = state.bodies.length - 1; i >= 0; i--) {
+      const b = state.bodies[i];
+      if (b.type !== 'blackhole') continue;
+      if (!b.anchored || !b.expiresAt) continue;     // 仅玩家黑洞
+      // 提前 1.5s 标记 fading，进入收缩动画
+      if (!b.fading && tnow >= b.expiresAt - 1500) {
+        b.fading = true;
+        b.fadeLife = 1.5;
+      }
+      // fading 阶段递减 fadeLife
+      if (b.fading) {
+        b.fadeLife = Math.max(0, b.fadeLife - dtFrame);
+      }
+      // 到期 → 触发消失动画 + 移除
+      if (tnow >= b.expiresAt) {
+        // 紫色冲击波 + 粒子
+        spawnShockwave(b.x, b.y, b.radius + 160,
+                       'rgba(200,155,255,0.85)', 0.50);
+        spawnExplosion(b.x, b.y, '#c89bff', 22);
+        addFlash('rgba(170,120,255,0.25)', 0.8);
+        audio.play('suck');
+        state.bodies.splice(i, 1);
+      }
+    }
+    // 母星震缩渐弱
+    if (state.planetPunch > 0) state.planetPunch = Math.max(0, state.planetPunch - dtFrame * 4);
 
     if (state.shake > 0) state.shake = Math.max(0, state.shake - dtFrame * 40);
-    updateFx(dtFrame);
+    if (state.healthFlash > 0) state.healthFlash = Math.max(0, state.healthFlash - dtFrame * 2);
 
-    // 波次完成 -> 进入下一波
-    if (state.waveActive && state.spawnList.every(s => s.done) && meteorsLeft === 0) {
-      state.waveActive = false;
-      if (state.health > 0) state.nextWaveTimer = 2.0;
-    }
-    if (!state.waveActive && state.nextWaveTimer > 0) {
-      state.nextWaveTimer -= dtFrame;
-      if (state.nextWaveTimer <= 0) startWave(state.wave + 1);
-    }
-
-    if (state.health <= 0) {
-      state.health = 0; state.gameOver = true;
-      // 结算：最终得分 = 得分 − 已消耗金钱（建得越多扣得越多，按实际花费比例扣除）
-      state.finalScore = Math.max(0, Math.round(state.score - state.spent));
-      // 战绩本地存：刷新最高分并标记新纪录
-      if (state.finalScore > state.best) {
-        state.best = state.finalScore;
-        state.newRecord = true;
-        try { localStorage.setItem('starshield_best', String(state.best)); } catch (e) {}
-      }
-    }
-  }
-
-  function renderFrame() {
-    render.drawFrame(state.bodies, state);
-    // 提示线：用"后台整系统前向 N 体模拟"预测每个星体未来轨迹（与真实积分一致，不飘忽）
-    // 减速时仍正常重算，让玩家从容布防
-    if (input && state.showHint) {
-      const now = performance.now();
-      if (!state.hintCache || now >= state.hintNext) {
-        const res = predictor.simulateFuture(state.bodies,
-          { duration: physics.PREDICT_DUR, dt: physics.PREDICT_DT });
-        state.hintCache = res;                 // 整段模拟结果（paths/bodies/sampleDt）
-        state.hintSampleDt = res.sampleDt;     // 预测线相邻点真实时间间隔
-        state.hintNext = now + 150;   // 节流：约 150ms 重算一次（降低运算负担）
-        state.hintSmooth = true;      // 标记：本帧有新预测，下一帧做插值平滑
-      }
-      if (!state.hintDisp) state.hintDisp = new Map();
-      for (let bi = 0; bi < state.bodies.length; bi++) {
-        const b = state.bodies[bi];
-        if (b.dead || b.isStar || b.immovable) continue;
-        const path = state.hintCache.paths[bi];
-        if (!path || path.length < 2) continue;
-        // 用"与预测线同一时刻同步演化"的其它天体未来位置做碰撞评估（修#1 判色失真）
-        const risk = predictor.evaluateRisk(state.hintCache, bi, state.star);
-        // 平滑缓冲：显示路径逐帧指数插值向新预测靠拢，消除 150ms 重算时的硬跳/闪烁
-        let disp = state.hintDisp.get(b);
-        if (!disp || disp.length !== risk.path.length) {
-          disp = risk.path.map(p => ({ x: p.x, y: p.y }));   // 长度变化则重置（换轨迹）
-        } else {
-          const k = state.hintSmooth ? 0.25 : 1;             // 新预测时缓冲过渡，否则保持
-          for (let i = 0; i < disp.length; i++) {
-            disp[i].x += (risk.path[i].x - disp[i].x) * k;
-            disp[i].y += (risk.path[i].y - disp[i].y) * k;
-          }
+    if (state.mode === 'survival' && !state.gameOver) {
+      const sv = dtFrame * 2;
+      state.score += sv;
+      state.scoreSurvive += sv;
+      // 限时倒计时
+      if (state.duration > 0) {
+        state.remainingTime = Math.max(0, state.remainingTime - dtFrame);
+        if (state.remainingTime <= 0) {
+          endGame('timeup');   // 时间到，未陨落
         }
-        state.hintDisp.set(b, disp);
-        // dt 传真实采样间隔（= sampleDt），使"每 2 秒一段、共三段"正确（修#4）
-        predictorRenderer.drawPredictionLine(disp, risk, true, state.hintSampleDt);
       }
-      // 清理已不存在（死亡/移除）星体的提示缓冲，避免 hintDisp 内存只增不减（修#5）
-      for (const key of Array.from(state.hintDisp.keys())) {
-        if (!state.bodies.includes(key)) state.hintDisp.delete(key);
-      }
-      state.hintSmooth = false;
-    } else if (state.hintDisp) {
-      state.hintDisp = null;   // 关闭提示时清空缓冲
-    }
-    // 拖拽中：由 input 提供预测数据并绘制
-    if (input && input.dragging && state.showPrediction) {
-      const tier = TIERS[state.currentTier];
-      // 黑洞：先画母星禁放圈，提示不可放置区域
-      if (tier.immovable) {
-        const gr = physics.RADIUS_K * Math.cbrt(tier.mass);
-        const r = physics.STAR_R + gr + NO_HOLE_MARGIN;
-        predictorRenderer.drawNoHoleZone(state.star.x, state.star.y, r);
-      }
-      const gm = tier.mass;
-      predictorRenderer.drawGhost(input.sx, input.sy, gm);
-      predictorRenderer.drawPredictionLine(input.path, input.risk, false, input.pathDt || physics.PREDICT_DT);
-      predictorRenderer.drawDragArrow(input.sx, input.sy, input.smx, input.smy);
     }
   }
 
-  function loop() {
-    requestAnimationFrame(loop);
-    stepFrame();
-    renderFrame();
+  // ===== HUD 更新 =====
+  function updateHud() {
+    // 游戏中才更新 HUD；菜单状态下不写 DOM，避免覆盖默认显示
+    if (!state.gameStarted) return;
+    if (!state.level) return;
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set('budgetVal', Math.round(state.budget));
+    const waveGroup = document.getElementById('waveGroup');
+    if (waveGroup) waveGroup.style.display = state.mode === 'campaign' ? '' : 'none';
+    // 闯关模式常驻显示「当前波/总波」，便于了解剩余波数
+    if (state.mode === 'campaign' && state.level && Array.isArray(state.level.waves)) {
+      set('waveVal', state.wave + '/' + state.level.waves.length);
+    } else {
+      set('waveVal', state.wave);
+    }
+    // 生存模式限时
+    const timeGroup = document.getElementById('timeGroup');
+    const timeVal = document.getElementById('timeVal');
+    if (timeGroup && timeVal) {
+      if (state.duration > 0) {
+        timeGroup.style.display = '';
+        const sec = Math.ceil(state.remainingTime);
+        timeVal.textContent = sec + 's';
+        timeVal.style.color = sec <= 10 ? '#ff7a7a' : '';
+      } else {
+        timeGroup.style.display = 'none';
+      }
+    }
+    const modeTag = document.getElementById('modeTag');
+    if (modeTag) {
+      modeTag.textContent = state.mode === 'campaign'
+        ? `闯关·${state.level.name}`
+        : `生存·${state.level.name}`;
+    }
+    const healthFill = document.getElementById('healthFill');
+    if (healthFill) {
+      const pct = clamp(state.health / (state.level.health || 1), 0, 1) * 100;
+      healthFill.style.width = pct + '%';
+      healthFill.style.background = pct < 30
+        ? 'linear-gradient(90deg,#ff6b6b,#ffa36b)'
+        : 'linear-gradient(90deg,#43e0a0,#6fdcff)';
+    }
+    const healthVal = document.getElementById('healthVal');
+    if (healthVal) {
+      healthVal.textContent = state.health;
+      // 仅在闪烁时临时改色；结束后清空 inline style，回退到 CSS 默认色
+      healthVal.style.color = state.healthFlash > 0 ? '#ff7a7a' : '';
+    }
+    set('scoreVal', integerScore());
+    set('bestVal', bestDisplay());
   }
 
-  // 分辨率/比例适配：
-  //  · 开局前按舞台容器宽高比确定逻辑世界(W×H)，使画布铺满屏幕、无黑边；
-  //    较短边固定为 REF，保证不同屏幕下星体视觉大小一致（游戏平衡不受比例影响）。
-  //  · 内部画布按显示尺寸×设备像素比(DPR)放大，保证高清。
-  //  · 开局后 worldLocked=true，窗口缩放只做等比"包含"缩放（可能留黑边），不改动世界。
-  function resize() {
-    const stage = document.querySelector('.stage');
-    const availW = (stage && stage.clientWidth) ? stage.clientWidth : (window.innerWidth - 320);
-    const availH = (stage && stage.clientHeight) ? stage.clientHeight : (window.innerHeight - 36);
-    const ar = availW / availH;
+  // ===== 关卡选择 API =====
+  function getLevelsForMode(mode) {
+    return mode === 'campaign' ? CAMPAIGN_LEVELS : SURVIVAL_LEVELS;
+  }
 
-    if (!worldLocked) {
-      // 让世界宽高比 = 屏幕宽高比 → 均匀缩放即可铺满
-      if (ar >= 1) { W = Math.round(REF * ar); H = REF; }   // 横屏：高度固定
-      else         { W = REF; H = Math.round(REF / ar); }   // 竖屏：宽度固定
+  // ===== 开始游戏 =====
+  function startGame(opts) {
+    state.mode = opts.mode || 'survival';
+    state.levelIndex = opts.levelIndex || 0;
+    // 闯关模式解锁校验：仅允许已解锁的关卡
+    if (state.mode === 'campaign' && !isLevelUnlocked(state.levelIndex)) {
+      return false;
+    }
+    const levels = getLevelsForMode(state.mode);
+    if (!levels[state.levelIndex]) return false;
+    state.level = levels[state.levelIndex];
+    state.gameStarted = true;
+    setupLevel();
+    // 按用户选择的开局方式处理「沿用上次布防」：
+    // - keepSetup 为 true：尝试应用上次结算时保存的布防
+    // - keepSetup 为 false / 未提供：从空场开始（仅母星），不读取存档
+    if (opts.keepSetup) {
+      applySavedSetup();
+    }
+    // 注意：开局不再调用 saveSetup（避免把空场覆盖真实存档）；
+    // 布防存档在 endGame 时由 saveSetup() 记录。
+
+    // 同步菜单高亮（用户用「再来一局」/「重新开始」时 input 内的选择状态需对齐）
+    if (typeof window.__syncMenuSelection === 'function') {
+      window.__syncMenuSelection(state.mode, state.levelIndex);
     }
 
-    const dpr = window.devicePixelRatio || 1;
-    const scale = Math.min(availW / W, availH / H) || 1;      // 均匀缩放（开局=铺满；锁后=包含）
-    canvas.style.width = (W * scale) + 'px';
-    canvas.style.height = (H * scale) + 'px';
-    canvas.width = Math.round(W * scale * dpr);             // 设备像素（高清）
-    canvas.height = Math.round(H * scale * dpr);
-    render.configureView(scale, dpr);
-    if (render.regenerateStars) render.regenerateStars();
+    // 显隐 UI
+    document.getElementById('menu').classList.add('hidden');
+    document.getElementById('hud').classList.remove('hidden');
+    document.getElementById('starBar').classList.remove('hidden');
+    document.getElementById('controls').classList.remove('hidden');
+    // 兜底：万一结算面板/message 还残留
+    const msg = document.getElementById('message');
+    if (msg) { msg.classList.remove('show'); msg.textContent = ''; }
+    const res = document.getElementById('result');
+    if (res) res.classList.add('hidden');
+
+    // 关卡横幅：展示本关目标与结束条件，停留更久、置顶居中且不遮挡核心区域
+    const banner = document.getElementById('levelBanner');
+    if (banner) {
+      const lvl = state.level;
+      const goal = lvl.objective || lvl.desc || '';
+      const fail = lvl.failCondition || '';
+      banner.innerHTML =
+        `<div class="lb-name">${lvl.name}</div>` +
+        `<div class="lb-goal">🎯 目标：${goal}</div>` +
+        (fail ? `<div class="lb-fail">⚠️ 失败：${fail}</div>` : '');
+      banner.classList.add('show');
+      clearTimeout(banner._t);
+      banner._t = setTimeout(() => banner.classList.remove('show'), 3600);
+    }
   }
 
-  function init() {
-    canvas = document.getElementById('game');
-    resize();                            // 先按屏幕确定世界尺寸 W/H（铺满）
-    ctx = render.initRender(canvas);     // 再生成星空(正确 W/H) 并配置渲染上下文
-    window.addEventListener('resize', resize);
-    predictorRenderer.attach(canvas);
-
-    // 读取本地最高分（file:// 下个别浏览器可能限制，try 兜底）
-    try { state.best = parseInt(localStorage.getItem('starshield_best') || '0', 10) || 0; }
-    catch (e) { state.best = 0; }
-
-    // 母星仅用 isStar 锚定（stepSystem 会跳过母星的位置/速度更新）；
-    // 不可加 immovable，否则碰撞会被当成"黑洞吞噬"而只给分、不扣血。
-    star = physics.createBody(physics.STAR_MASS, W / 2, H / 2, 0, 0,
-                              { isStar: true });
-    star.radius = physics.STAR_R;
-    state.star = star;
-    state.bodies.push(star);
-
-    startWave(1);
-    worldLocked = true;                  // 开局后锁定世界比例，窗口缩放只等比缩放显示
-    requestAnimationFrame(loop);
+  // 返回菜单
+  function backToMenu() {
+    state.gameStarted = false;
+    state.gameOver = false;
+    // 重置 controls 按钮状态（避免重开二次确认武装残留）
+    const restartBtn = document.getElementById('restartBtn');
+    if (restartBtn) {
+      restartBtn.dataset.armed = '0';
+      restartBtn.textContent = '重新开始';
+      restartBtn.classList.remove('armed');
+    }
+    const menuBtn = document.getElementById('menuBtn');
+    if (menuBtn) {
+      menuBtn.dataset.armed = '0';
+      menuBtn.textContent = '返回菜单';
+    }
+    // 清理所有动态状态
+    state.shake = 0;
+    state.healthFlash = 0;
+    document.getElementById('menu').classList.remove('hidden');
+    document.getElementById('hud').classList.add('hidden');
+    document.getElementById('starBar').classList.add('hidden');
+    document.getElementById('controls').classList.add('hidden');
+    const res = document.getElementById('result');
+    if (res) res.classList.add('hidden');
+    // 通知 input 刷新最佳战绩（可能在本局中更新过）
+    if (typeof window.__refreshMenuBest === 'function') {
+      window.__refreshMenuBest();
+    }
   }
 
-  return { init, state, TIERS, NO_HOLE_MARGIN, SCORE, get W(){ return W; }, get H(){ return H; } };
+  // 当前关卡与最佳战绩快照
+  function getCurrentRunStats() {
+    return {
+      mode: state.mode,
+      levelName: state.level ? state.level.name : '',
+      wave: state.wave,
+      totalWaves: (state.mode === 'campaign' && Array.isArray(state.level.waves)) ? state.level.waves.length : null,
+      score: integerScore(),
+      cleared: state.asteroidsCleared,
+      spent: state.totalSpent,
+      hits: state.hitCount,
+      difficulty: Number.isFinite(state.difficulty) ? Number(state.difficulty.toFixed(2)) : 0.3,
+      waveBonus: state.lastWaveBonus,
+      duration: state.duration,                    // 限时秒数（生存模式）
+      endReason: state.endReason,                  // 'defeat' | 'timeup' | 'win' | null
+      // 分数明细（分账展示）
+      scoreIntercept: Math.round(state.scoreIntercept),
+      interceptCount: state.asteroidsCleared,    // 拦截清除的威胁总数（用于结算明细）
+      scoreWaveBonus: Math.round(state.scoreWaveBonus),
+      scoreSurvive: Math.round(state.scoreSurvive),
+      scorePenalty: Math.round(state.scorePenalty),
+      // 计分权重说明参数
+      diffMul: Number((1 + Math.max(0, state.difficulty - 0.3) * 1.4).toFixed(2)),
+      modeMul: state.mode === 'campaign' ? Number((1 + state.levelIndex * 0.15).toFixed(2)) : 1,
+    };
+  }
+
+  // 对外
+  window.game = {
+    state,
+    startGame,
+    backToMenu,
+    stepFrame,
+    updateHud,
+    placeStar,
+    canPlaceAt,
+    loadBest,
+    saveBest,
+    clearAllProgress,
+    bestDisplay,
+    bestForMode,
+    getCurrentRunStats,
+    getLevelsForMode,
+    isLevelUnlocked,
+    getCampaignUnlocked: function () { return campaignUnlocked; },
+    STAR_TYPES,
+    SURVIVAL_LEVELS,
+    CAMPAIGN_LEVELS,
+    PLANET_FORBIDDEN_PAD,
+  };
+
+  loadBest();
 })();
-
-// 入口（脚本置于 body 末尾，DOM 已就绪）
-game.init();

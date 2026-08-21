@@ -112,5 +112,72 @@ const predictorRenderer = (function () {
     ctx.restore();
   }
 
-  return { attach, drawGhost, drawPredictionLine, drawDragArrow, drawNoHoleZone };
+  // 统一预测：对当前系统里所有运动星体/陨石绘制三色轨迹（提示线）
+  // 优化：每帧只 simulateFuture 一次，避免 O(N²) 重复积分。
+  function renderTrajectories(state) {
+    if (typeof predictor === 'undefined' || !predictor) return;
+    const planet = state.bodies[0];
+    if (!planet) return;
+    if (!state.bodies || state.bodies.length === 0) return;
+    // 一次前向模拟，复用给所有运动天体
+    const sim = predictor.simulateFuture(state.bodies, {
+      duration: 5,
+      dt: physics.PREDICT_DT,
+      sampleEvery: 2,
+    });
+    for (let i = 0; i < state.bodies.length; i++) {
+      const b = state.bodies[i];
+      if (b.immovable) continue;
+      if (b.type === 'planet') continue;
+      if (b.x == null) continue;
+      const risk = predictor.evaluateRisk(sim, i, planet);
+      drawPredictionLine(risk.path, risk, true, sim.sampleDt);
+    }
+  }
+
+  // 拖放预测：对每个 placingStar 临时注入一份 bodies，模拟其轨迹
+  // placingStars: [{x,y,vx,vy,mass,radius,type}, ...]
+  // 返回：成功返回 true（至少画了一条预测线）
+  function drawPlacementPrediction(state, placingStars) {
+    if (typeof predictor === 'undefined' || !predictor) return false;
+    if (!placingStars || placingStars.length === 0) return false;
+    const planet = state.bodies[0];
+    if (!planet) return false;
+    // 浅克隆 state.bodies（保留母星/黑洞/玩家星体的真实位置）
+    const snapshot = state.bodies.map(b => Object.assign({}, b));
+    // 把 placingStars 作为"假定放置"追加到末尾
+    const injected = [];
+    for (let k = 0; k < placingStars.length; k++) {
+      const ps = placingStars[k];
+      if (ps.forbidden) continue;                 // 禁区的不预测
+      const b = {
+        type: ps.type === 'blackhole' ? 'blackhole' : 'star',
+        mass: ps.mass || 300, radius: ps.radius || 14,
+        x: ps.x, y: ps.y,
+        vx: ps.vx || 0, vy: ps.vy || 0,
+        isCollectable: true,
+        // 玩家放置的恒星不会被 anchored/immovable（黑洞例外）
+        ...(ps.type === 'blackhole' ? { anchored: true, immovable: true } : {}),
+      };
+      snapshot.push(b);
+      injected.push({ index: snapshot.length - 1, body: b });
+    }
+    if (injected.length === 0) return false;
+    // 一次前向模拟
+    const sim = predictor.simulateFuture(snapshot, {
+      duration: 5,
+      dt: physics.PREDICT_DT,
+      sampleEvery: 2,
+    });
+    // 对每个注入的天体画预测线
+    for (const item of injected) {
+      // 索引已稳定，simulateFuture 内部克隆 snapshot 时保持顺序
+      const risk = predictor.evaluateRisk(sim, item.index, planet);
+      // placing 的预测线：稳态（不闪烁），颜色与渲染规范一致
+      drawPredictionLine(risk.path, risk, true, sim.sampleDt);
+    }
+    return true;
+  }
+
+  return { attach, drawGhost, drawPredictionLine, drawDragArrow, drawNoHoleZone, renderTrajectories, drawPlacementPrediction };
 })();

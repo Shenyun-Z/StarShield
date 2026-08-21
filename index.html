@@ -1,65 +1,187 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>星盾防线 / Star Shield</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StarShield 星盾防线</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="wrap">
-    <div class="stage">
-      <canvas id="game"></canvas>
+  <div id="stage" class="stage">
+    <canvas id="game"></canvas>
+
+    <!-- 顶部状态条：默认隐藏，游戏开始后显示 -->
+    <div id="hud" class="hud hidden">
+      <div id="modeTag" class="mode-tag">模式</div>
+      <div class="hud-group">
+        <span class="hud-label">星能</span>
+        <span id="budgetVal">0</span>
+      </div>
+      <div class="hud-group" id="waveGroup">
+        <span class="hud-label">波次</span>
+        <span id="waveVal">0</span>
+      </div>
+      <div class="hud-group" id="timeGroup" style="display:none">
+        <span class="hud-label">剩余</span>
+        <span id="timeVal">0</span>
+      </div>
+      <div class="hud-group health-group">
+        <span class="hud-label">母星</span>
+        <span id="healthBar" class="health-bar"><span id="healthFill"></span></span>
+        <span id="healthVal" class="health-val">20</span>
+      </div>
+      <div class="hud-group">
+        <span class="hud-label">分数</span>
+        <span id="scoreVal">0</span>
+      </div>
+      <div class="hud-group best-group">
+        <span class="hud-label">最佳</span>
+        <span id="bestVal">—</span>
+      </div>
     </div>
 
-    <aside class="panel">
-      <h1>星盾防线</h1>
-      <p class="hint">拖拽空白处摆放星体，实时预测 6 秒轨迹（每 2 秒一段）。守护母星！</p>
+    <!-- 星体选择栏：默认隐藏，游戏开始后显示 -->
+    <div id="starBar" class="star-bar hidden">
+      <span class="star-bar-label">放置：</span>
+      <button class="star-opt" data-star="small">小行星<small>50</small></button>
+      <button class="star-opt" data-star="mid">中行星<small>150</small></button>
+      <button class="star-opt selected" data-star="large">大行星<small>300</small></button>
+      <button class="star-opt" data-star="star">恒星<small>500</small></button>
+      <button class="star-opt bh" data-star="blackhole">黑洞<small>1500</small></button>
+    </div>
 
-      <div class="block">
-        <div class="label">星体档位（点击选择）</div>
-        <div class="tiers">
-          <button class="tier" data-tier="small">小行星<br><small>m=50 · 3点</small></button>
-          <button class="tier" data-tier="medium">中行星<br><small>m=200 · 6点</small></button>
-          <button class="tier" data-tier="large">大行星<br><small>m=600 · 12点</small></button>
-          <button class="tier" data-tier="star">恒星<br><small>m=1500 · 20点</small></button>
-          <button class="tier" data-tier="blackhole">黑洞<br><small>m=6000 · 30点 · 静止·限时12s</small></button>
+    <!-- 操作按钮：默认隐藏，游戏开始后显示 -->
+    <div id="controls" class="controls hidden">
+      <button id="slowBtn" class="ctrl">时间：正常</button>
+      <button id="audioBtn" class="ctrl">音效：开</button>
+      <button id="hintBtn" class="ctrl">预测：开</button>
+      <button id="restartBtn" class="ctrl restart">重新开始</button>
+      <button id="menuBtn" class="ctrl ghost">返回菜单</button>
+      <button id="clearBtn" class="ctrl danger">清除进度</button>
+    </div>
+
+    <!-- 提示信息：仅游戏中使用 -->
+    <div id="message" class="message"></div>
+
+    <!-- 关卡横幅（每次开局淡入淡出） -->
+    <div id="levelBanner"></div>
+
+    <!-- 失败结算面板：默认隐藏 -->
+    <div id="result" class="result hidden">
+      <div class="result-card">
+        <h2 id="resultTitle">防线失守</h2>
+        <p id="resultSubtitle" class="result-sub"></p>
+
+        <div class="result-overview">
+          <div id="rsWavesItem"><span class="rs-label">撑过波次</span><span id="rsWaves">0</span></div>
+          <div><span class="rs-label">母星受击</span><span id="rsHits">0</span></div>
+          <div><span class="rs-label">拦截威胁</span><span id="rsCleared">0</span></div>
+          <div><span class="rs-label">星能花费</span><span id="rsSpent">0</span></div>
+        </div>
+
+        <!-- 计分规则与明细 -->
+        <div class="score-breakdown">
+          <div class="sd-head">
+            <span>计分项目</span>
+            <span>权重 / 倍率</span>
+            <span>得分</span>
+          </div>
+          <div class="sd-row">
+            <span class="sd-name">拦截威胁清除<small id="rsInterceptNote">陨石 6+质量/8 · 彗星 12</small></span>
+            <span class="sd-mul"><span id="sdDiffMul">×1.00</span><small id="sdModeMul">×1.00</small></span>
+            <span class="sd-val" id="rsIntercept">0</span>
+          </div>
+          <div class="sd-row">
+            <span class="sd-name">波次通关奖励<small>每波 15 + 5×波序</small></span>
+            <span class="sd-mul"><small>固定</small></span>
+            <span class="sd-val" id="rsWaveBonus">0</span>
+          </div>
+          <div class="sd-row" id="sdSurviveRow">
+            <span class="sd-name">生存时长奖励<small>每秒 +2（生存模式）</small></span>
+            <span class="sd-mul"><small>固定</small></span>
+            <span class="sd-val" id="rsSurvive">0</span>
+          </div>
+          <div class="sd-row penalty">
+            <span class="sd-name">母星被击惩罚<small>每次 −8</small></span>
+            <span class="sd-mul"><small>扣分</small></span>
+            <span class="sd-val" id="rsPenalty">0</span>
+          </div>
+          <div class="sd-total">
+            <span>最终总分</span>
+            <span class="sd-val" id="rsScore">0</span>
+          </div>
+          <p class="sd-note">难度倍率 = 1 + max(0, 难度−0.3)×1.4；关卡倍率（闯关）= 1 + 关卡序号×0.15。</p>
+        </div>
+
+        <div class="result-actions">
+          <button id="resultNext" class="opt-btn primary" style="display:none">下一关</button>
+          <button id="resultRetry" class="opt-btn primary">再来一局</button>
+          <button id="resultMenu" class="opt-btn">返回菜单</button>
+          <button id="resultClear" class="opt-btn danger">清除进度</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 开始菜单：默认显示，强遮罩 -->
+    <div id="menu" class="menu">
+      <h1>星盾防线</h1>
+      <p class="subtitle">StarShield · 用引力守护母星</p>
+
+      <div class="menu-section">
+        <div class="menu-title">选择模式</div>
+        <div class="mode-cards">
+          <button class="mode-card selected" data-mode="survival">
+            <div class="mc-name">生存模式</div>
+            <div class="mc-desc">无限星能 · 比拼分数<br>陨石随机来袭，活得越久分数越高</div>
+          </button>
+          <button class="mode-card" data-mode="campaign">
+            <div class="mc-name">闯关模式</div>
+            <div class="mc-desc">固定星能 · 层层递进<br>30 关预设关卡，通关解锁下一关，比拼通关进度</div>
+          </button>
         </div>
       </div>
 
-      <div class="block btns">
-        <button id="slowBtn">时间：正常</button>
-        <button id="audioBtn">音效：开</button>
+      <!-- 关卡选择 -->
+      <div class="menu-section">
+        <div class="menu-title" id="levelTitle">关卡预设</div>
+        <div class="level-cards" id="levelCards">
+          <!-- 由 JS 根据模式动态填充 -->
+        </div>
       </div>
 
-      <div class="block">
-        <label class="chk"><input type="checkbox" id="hintChk" checked /> 提示线：场上运动星体的未来轨迹</label>
-        <label class="chk"><input type="checkbox" id="predChk" checked /> 预测线：拖拽摆放时新星体的轨迹预览</label>
+      <!-- 开局方式 -->
+      <div class="menu-section">
+        <div class="menu-title">开局方式</div>
+        <div class="opt-row">
+          <button id="startFresh" class="opt-btn selected primary">从零开始</button>
+          <button id="startWithSetup" class="opt-btn">沿用上次布防</button>
+        </div>
+        <p id="setupHint" class="setup-hint"></p>
       </div>
 
-      <div class="block">
-        <button id="restartBtn" class="restart">重新开始</button>
+      <!-- 唯一的开始按钮 -->
+      <div class="menu-cta">
+        <button id="startBtn" class="start-btn">开始游戏</button>
+        <p id="ctaHint" class="cta-hint">生存模式 · 无限星能 · 比拼分数</p>
       </div>
 
-      <div id="msg" class="msg"></div>
+      <div id="menuBest" class="menu-best"></div>
 
-      <div class="legend">
-        <div><span class="dot blue"></span> 蓝：安全 / 引力弹弓</div>
-        <div><span class="dot red"></span> 红：将撞母星，别放！</div>
-        <div><span class="dot green"></span> 绿：将被黑洞吞噬</div>
-        <div class="note">黑洞限时 12 秒后坍缩消失</div>
-        <div class="note">黑洞不能放在母星周围</div>
+      <div class="menu-footer">
+        <button id="menuClearProg" class="opt-btn danger">一键清除进度</button>
+        <p class="footer-hint">清除后将从第 1 关重新挑战，并清空最佳战绩与存档布防</p>
       </div>
-    </aside>
+    </div>
   </div>
 
-  <!-- 脚本按依赖顺序引入；成员1/2 模块先加载，成员3 的 game/input 后加载 -->
   <script src="js/physics.js"></script>
   <script src="js/predictor.js"></script>
-  <script src="js/render.js"></script>
   <script src="js/predictorRenderer.js"></script>
   <script src="js/audio.js"></script>
-  <script src="js/game.js"></script>
+  <!-- 闯关模式确定性关卡配置 -->
+  <script src="js/levels-campaign.js"></script>
+  <script src="js/render.js"></script>
   <script src="js/input.js"></script>
+  <script src="js/game.js"></script>
 </body>
 </html>
