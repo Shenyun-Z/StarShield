@@ -56,7 +56,7 @@ if (!game || !game.startGame || !game.stepFrame) {
 
 // ---- 系统测试：生存模式，强制陨石撞母星 ----
 function testFullHitStar() {
-  game.startGame('survival', 0);
+  game.startGame({ mode: 'survival', levelIndex: 0 });
   const st = game.state;
   if (!st || !st.gameStarted) { console.error('FAIL: startGame 未启动'); return false; }
   if (st.bodies.some(b => b.type === 'blackhole')) { console.error('FAIL: 开局不应有黑洞'); return false; }
@@ -85,7 +85,7 @@ function testFullHitStar() {
 
 // ---- 系统测试：母星被多次撞击，血量耗尽应触发 gameOver ----
 function testGameOverOnDepletion() {
-  game.startGame('survival', 0);
+  game.startGame({ mode: 'survival', levelIndex: 0 });
   const st = game.state;
   st.bodies = st.bodies.filter(b => b.type === 'planet');
   const planet = st.bodies[0];

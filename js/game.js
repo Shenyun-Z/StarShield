@@ -2,8 +2,10 @@
   'use strict';
 
   // ===== 常量 =====
-  const DT = 1 / 60;
-  const STEPS = 1;
+  const DT = 1 / 60;              // 固定物理步长(s)：主循环按真实时间累加，攒够一步才推进
+  const MAX_SUBSTEPS = 3;         // 单帧最多补 3 个物理步（防止卡顿后追帧雪崩）
+  const MAX_FRAME_DT = 0.25;      // 单帧真实时间上限(s)（切后台回来时防止一次补太多）
+  let stepAccumulator = 0;        // 未消耗的真实时间（秒）
   const BASE_HEALTH = 20;
   // 母星与玩家星体之间最小距离（半径 + 缓冲）。
   // 必须与 input.js 的 isInsidePlanet 使用同一个值，避免判定不一致。
@@ -21,7 +23,6 @@
       objective: '存活 60 秒，尽可能多地拦截来袭威胁',
       failCondition: '母星生命值（20 点）归零',
       health: 20, budget: 99999, duration: 60,
-      scene: { blackholes: [] },                          // 修正：默认无黑洞
       waves: { startInterval: 2.0, endInterval: 0.7, intervalDrop: 0.04,
                startDifficulty: 0.30, endDifficulty: 1.0, difficultyRamp: 0.025,
                startCount: 3, endCount: 12, countRamp: 0.25 },
@@ -33,7 +34,6 @@
       objective: '存活 90 秒，坚持越久得分越高',
       failCondition: '母星生命值（18 点）归零',
       health: 18, budget: 99999, duration: 90,
-      scene: { blackholes: [] },
       waves: { startInterval: 1.6, endInterval: 0.5, intervalDrop: 0.05,
                startDifficulty: 0.40, endDifficulty: 1.0, difficultyRamp: 0.022,
                startCount: 4, endCount: 14, countRamp: 0.28 },
@@ -45,7 +45,6 @@
       objective: '存活 120 秒，应对高频高难来袭',
       failCondition: '母星生命值（15 点）归零',
       health: 15, budget: 99999, duration: 120,
-      scene: { blackholes: [] },
       waves: { startInterval: 1.2, endInterval: 0.4, intervalDrop: 0.05,
                startDifficulty: 0.45, endDifficulty: 1.0, difficultyRamp: 0.018,
                startCount: 5, endCount: 16, countRamp: 0.30 },
@@ -62,7 +61,6 @@
   const state = {
     bodies: [],
     particles: [],
-    screenShake: 0,
     shake: 0,
     health: BASE_HEALTH,
     budget: 0,
@@ -89,8 +87,7 @@
     healthFlash: 0,
     // 碰撞动画
     shockwaves: [],         // { x, y, radius, maxRadius, life, maxLife, color }
-    flashRed: 0,            // 0~1，兼容旧调用
-    flashes: [],            // { color, life, maxLife, intensity }
+    flashes: [],            // { color, life, maxLife, intensity } —— 全屏屏闪（render 消费）
     planetPunch: 0,         // 母星受击震缩 0~1，>0 时缩放抖动
     // 生存模式限时
     duration: 0,            // 0 表示无限；>0 表示秒数
@@ -101,6 +98,10 @@
 
   // ===== 工具 =====
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function clampInt(v, a, b) {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? clamp(n, a, b) : a;
+  }
   function rand(a, b) { return a + Math.random() * (b - a); }
   function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
   function lerp(a, b, t) { return a + (b - a) * t; }
@@ -112,9 +113,11 @@
   ];
   function loadBest() {
     try {
-      bestScore = parseInt(localStorage.getItem('starshield_best_score') || '0', 10) || 0;
-      bestWaves = parseInt(localStorage.getItem('starshield_best_waves') || '0', 10) || 0;
-      campaignUnlocked = parseInt(localStorage.getItem('starshield_campaign_unlocked') || '0', 10) || 0;
+      bestScore = Math.max(0, parseInt(localStorage.getItem('starshield_best_score') || '0', 10) || 0);
+      bestWaves = Math.max(0, parseInt(localStorage.getItem('starshield_best_waves') || '0', 10) || 0);
+      // 解锁进度做区间收敛：存档可被手工篡改，越界值会让关卡列表/开局判定异常
+      const unlocked = parseInt(localStorage.getItem('starshield_campaign_unlocked') || '0', 10) || 0;
+      campaignUnlocked = clampInt(unlocked, 0, Math.max(0, CAMPAIGN_LEVELS.length));
     } catch (e) { bestScore = 0; bestWaves = 0; campaignUnlocked = 0; }
   }
   function saveBest() {
@@ -180,7 +183,6 @@
     state.bodies = [];
     state.particles = [];
     state.shake = 0;
-    state.screenShake = 0;
     state.score = 0;
     state.wave = 0;
     state.endReason = null;
@@ -203,7 +205,6 @@
     state.waveTimer = 0;
     state.waveInterval = 0;
     state.spawnAccumulator = 0;
-    state.spawnTimer = 0;
     state.healthFlash = 0;
 
     state.health = lvl.health;
@@ -215,7 +216,6 @@
 
     // 碰撞动画清空
     state.shockwaves = [];
-    state.flashRed = 0;
     state.flashes = [];
     state.planetPunch = 0;
 
@@ -230,6 +230,19 @@
     // 黑洞仅由玩家在游戏中放置，且放置后固定位置、10 秒后自动消失。
   }
 
+  // 存档是用户可篡改的本地数据：必须白名单化质量/半径/花费，并校验坐标，
+  // 否则被写入的 NaN / 超大质量会污染物理系统（NaN 会通过引力扩散到全场）。
+  const MAX_SAVED_BODIES = 40;
+  function tierByMass(mass) {
+    let best = STAR_TYPES.mid, bestDiff = Infinity;
+    for (const k in STAR_TYPES) {
+      if (!Object.prototype.hasOwnProperty.call(STAR_TYPES, k)) continue;
+      const d = Math.abs(STAR_TYPES[k].mass - mass);
+      if (d < bestDiff) { bestDiff = d; best = STAR_TYPES[k]; }
+    }
+    return best;
+  }
+
   function applySavedSetup() {
     try {
       const raw = localStorage.getItem('starshield_setup');
@@ -237,13 +250,22 @@
       const saved = JSON.parse(raw);
       if (!Array.isArray(saved) || saved.length === 0) return false;
       const now = performance.now();
+      const W = window.innerWidth, H = window.innerHeight;
+      let applied = 0;
       for (const s of saved) {
+        if (applied >= MAX_SAVED_BODIES) break;
+        if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) continue;
+        if (s.x < 0 || s.y < 0 || s.x > W || s.y > H) continue;   // 视口外（换过窗口尺寸）丢弃
         const isBH = s.type === 'blackhole';
+        const def = isBH ? STAR_TYPES.blackhole : tierByMass(s.mass);
+        const p = { x: s.x, y: s.y };
+        if (!canPlaceAt(p)) continue;                             // 母星禁放区内丢弃
+        if (state.budget < def.cost) continue;                    // 星能不足则跳过（不再产生负星能）
         const body = {
           type: isBH ? 'blackhole' : 'star',
-          mass: s.mass || 300, radius: s.radius || 14,
-          x: s.x, y: s.y, vx: 0, vy: 0,
-          isCollectable: true, placedType: s.type || 'star',
+          mass: def.mass, radius: def.radius,
+          x: p.x, y: p.y, vx: 0, vy: 0,
+          isCollectable: true, placedType: isBH ? 'blackhole' : (s.type || 'star'),
           placedAt: now,
         };
         if (isBH) {
@@ -254,12 +276,13 @@
           body.fading = false;
         }
         state.bodies.push(body);
-        state.budget -= (s.mass || 300);
-        state.totalSpent += (s.mass || 300);
+        state.budget -= def.cost;
+        state.totalSpent += def.cost;
         state.starsPlaced++;
+        applied++;
       }
       state.budget = Math.max(0, state.budget);
-      return true;
+      return applied > 0;
     } catch (e) { return false; }
   }
   function saveSetup() {
@@ -367,8 +390,11 @@
     state.wave++;
     const g = generateWave();
     if (!g) {
-      // 极端模式：已无更多波次（理论上清波时已判通关，这里兜底）
+      // 闯关模式：已无更多波次（理论上清波时已判通关，这里兜底）
+      // 必须回退 wave，否则空转时波次计数会被每 0.5s 无限累加（HUD 显示 25/22 之类）
+      state.wave--;
       state.waveActive = false;
+      state.waveTimer = 0;
       return;
     }
     const { queue, interval, difficulty } = g;
@@ -387,26 +413,38 @@
     spawnThreat(item);
   }
 
-  // 生成威胁天体。优先使用确定性配置描述的 {edge, angle, speed, mass, radius}，
-  // 否则（生存模式）回退到随机生成。angle 为来袭方向（指向母星的偏角）。
+  // 来袭边归一化：确定性配置用 'top'/'right'/'bottom'/'left'，生存随机用 0~3
+  const EDGE_INDEX = { top: 0, right: 1, bottom: 2, left: 3 };
+  function normalizeEdge(v) {
+    if (typeof v === 'number' && Number.isFinite(v)) return ((v % 4) + 4) % 4;
+    const key = String(v == null ? '' : v).toLowerCase();
+    return Object.prototype.hasOwnProperty.call(EDGE_INDEX, key) ? EDGE_INDEX[key] : null;
+  }
+
+  // 生成威胁天体。优先使用确定性配置描述的 {edge, spread, speed, mass, radius}，
+  // 否则（生存模式）回退到随机生成。spread 为相对「母星方向」的偏角（弧度）。
   function spawnThreat(item) {
     const kind = item.kind;
     const difficulty = item.difficulty || 0;
     const spawn = item.spawn || null;       // 确定性模式携带的预生成描述
-    const cx = window.innerWidth / 2;
-    const cy = window.innerHeight / 2;
+    const W = window.innerWidth, H = window.innerHeight;
+    const cx = W / 2, cy = H / 2;
 
-    let edge, angle, speed, mass, radius;
+    let edge, spread, speed, mass, radius;
     if (spawn) {
-      edge = spawn.edge;
-      angle = spawn.angle;
+      const e = normalizeEdge(spawn.edge);
+      edge = (e === null) ? randInt(0, 3) : e;
+      spread = Number.isFinite(spawn.spread) ? spawn.spread : 0;
       speed = spawn.speed;
       mass = spawn.mass;
       radius = spawn.radius;
     } else {
       // 生存模式：随机（允许差异，不影响公平性，因生存模式比拼分数而非固定挑战）
+      // 瞄准母星，偏角随难度收窄（±0.60 rad → ±0.15 rad）：
+      // 早期宽容、后期来袭更精准；同时避免大量威胁背向母星飞出边界白送拦截分。
       edge = randInt(0, 3);
-      angle = Math.random() * Math.PI * 2;
+      const spreadArc = lerp(0.60, 0.15, clamp(difficulty, 0, 1));
+      spread = rand(-spreadArc, spreadArc);
       speed = (kind === 'comet')
         ? rand(120, 200) * (0.8 + difficulty * 0.6)
         : rand(60, 110) * (0.8 + difficulty * 0.6);
@@ -414,25 +452,17 @@
       radius = kind === 'comet' ? 7 : (13 + difficulty * 6);
     }
 
+    // 出屏幕外的生成点（各边外扩 margin）
     const margin = 60;
     let x, y;
-    if (edge === 0) { x = rand(margin, cx * 2 - margin); y = -margin; }
-    else if (edge === 1) { x = cx * 2 + margin; y = rand(margin, cy * 2 - margin); }
-    else if (edge === 2) { x = rand(margin, cx * 2 - margin); y = cy * 2 + margin; }
-    else { x = -margin; y = rand(margin, cy * 2 - margin); }
+    if (edge === 0) { x = rand(margin, W - margin); y = -margin; }
+    else if (edge === 1) { x = W + margin; y = rand(margin, H - margin); }
+    else if (edge === 2) { x = rand(margin, W - margin); y = H + margin; }
+    else { x = -margin; y = rand(margin, H - margin); }
 
-    // angle 为相对「母星方向」的偏角：基准朝母星，叠加偏角
+    // 基准朝母星，叠加偏角 → 绝对来袭角
     const baseAng = Math.atan2(cy - y, cx - x);
-    const ang = baseAng + (spawn ? angle : (angle - baseAng)); // 生存随机用原始 angle
-    if (spawn) {
-      // 确定性：spread 为相对母星方向的偏角，换算为绝对来袭角
-      const baseAng = Math.atan2(cy - y, cx - x);
-      const ang = baseAng + (spawn.spread || 0);
-      const vx = Math.cos(ang) * speed;
-      const vy = Math.sin(ang) * speed;
-      pushThreatBody(kind, mass, radius, x, y, vx, vy);
-      return;
-    }
+    const ang = baseAng + spread;
     const vx = Math.cos(ang) * speed;
     const vy = Math.sin(ang) * speed;
     pushThreatBody(kind, mass, radius, x, y, vx, vy);
@@ -512,8 +542,10 @@
     state.health -= 1;
     state.hitCount += 1;
     // 失守惩罚：母星被击中扣 8 分（得分不低于 0）
-    if (state.score > 0) state.score = Math.max(0, state.score - 8);
-    state.scorePenalty += 8;
+    // 只累计「实际扣除量」，保证结算面板的惩罚明细与真实扣分一致
+    const scoreBefore = state.score;
+    state.score = Math.max(0, state.score - 8);
+    state.scorePenalty += (scoreBefore - state.score);
     state.healthFlash = 1;
     state.shake = 14;
     state.planetPunch = 1;                       // 母星震缩
@@ -592,9 +624,27 @@
   }
 
   // ===== 主循环步进 =====
-  function stepFrame() {
-    if (state.gameOver || !state.gameStarted) return;
-    const dtFrame = DT * STEPS * state.timeScale;
+  // dtReal：本帧真实经过的秒数（由 input.js 的 rAF 循环传入）。
+  // 内部按固定步长 DT 累加推进，返回时 state 已前进 0~MAX_SUBSTEPS 步。
+  function stepFrame(dtReal) {
+    if (state.gameOver || !state.gameStarted) { stepAccumulator = 0; return; }
+
+    // 帧率无关的固定步长推进：按真实时间累加，攒够一个 DT 才走一步。
+    // 这样 60Hz / 120Hz / 掉帧下的游戏速度一致，且物理步长恒为 DT
+    // （若缩放步长本身，慢动作会让物理与预测积分不一致、预测线失真）。
+    // dtReal 缺省时按一帧（DT）处理，便于脚本/测试直接调用 stepFrame()。
+    const real = (typeof dtReal === 'number' && Number.isFinite(dtReal) && dtReal > 0)
+      ? Math.min(dtReal, MAX_FRAME_DT)
+      : DT;
+    stepAccumulator += real * state.timeScale;
+    let steps = 0;
+    while (stepAccumulator >= DT && steps < MAX_SUBSTEPS) {
+      stepAccumulator -= DT;
+      steps++;
+    }
+    if (steps === 0) return;                       // 还没攒够一步（高刷屏上常见）
+    if (stepAccumulator >= DT) stepAccumulator = 0; // 积压过多 → 丢弃，避免追帧雪崩
+    const dtFrame = DT * steps;
 
     if (!state.waveActive) {
       state.waveTimer += dtFrame;
@@ -607,8 +657,7 @@
       }
     }
 
-    const dtSub = DT * state.timeScale;
-    for (let k = 0; k < STEPS; k++) physics.stepSystem(state.bodies, dtSub);
+    for (let k = 0; k < steps; k++) physics.stepSystem(state.bodies, DT);
 
     // 彗星尾迹
     for (const b of state.bodies) {
@@ -630,21 +679,17 @@
       const dx = b.x - planet.x, dy = b.y - planet.y;
       const dist = Math.hypot(dx, dy);
       if (dist < planet.radius + b.radius) {
-        if (b.type === 'asteroid') {
-          damagePlanet(b);
-          state.bodies.splice(i, 1);
-          continue;
-        } else {
-          damagePlanet(b);
-          state.bodies.splice(i, 1);
-          continue;
-        }
+        // 撞上母星（含玩家星体被自身引力拽回）：扣血并移除
+        damagePlanet(b);
+        state.bodies.splice(i, 1);
+        continue;
       }
 
       const m = 120;
       if (b.x < -m || b.x > window.innerWidth + m || b.y < -m || b.y > window.innerHeight + m) {
-        // 出界（被引力偏转后飞离）：计入拦截清除
-        registerClear(b, 'flee');
+        // 出界：仅「来袭威胁」（陨石/彗星）计入拦截清除。
+        // 玩家星体飞出边界不得分，否则可反复投掷小行星出界刷分。
+        if (b.type === 'asteroid' || b.type === 'comet') registerClear(b, 'flee');
         state.bodies.splice(i, 1);
       }
     }
@@ -694,8 +739,13 @@
         // 撞上母星 → 扣血 + 红色受击动画 + 碎片（physics 先标记了 dead，这里补发）
         damagePlanet(b);
       } else if (b.exploded && !b.captured) {
-        // 玩家星体互撞 → 蓝色火花
-        starStarCollision(b, b);
+        // 玩家星体互撞 → 蓝色火花。一次碰撞涉及两个天体，
+        // 只触发一次（physics 通过 explodedWith 记录了对手）
+        if (!b._clashHandled) {
+          const other = b.explodedWith;
+          if (other) other._clashHandled = true;
+          starStarCollision(b, other || b);
+        }
       } else if (b.captured) {
         // 被黑洞吞：优先使用 capturedBy，找不到则最近黑洞
         let bh = b.capturedBy;
@@ -731,7 +781,6 @@
       if (s.life <= 0) state.shockwaves.splice(i, 1);
     }
     // 屏闪渐弱
-    if (state.flashRed > 0) state.flashRed = Math.max(0, state.flashRed - dtFrame * 3);
     for (let i = state.flashes.length - 1; i >= 0; i--) {
       state.flashes[i].life -= dtFrame;
       if (state.flashes[i].life <= 0) state.flashes.splice(i, 1);
@@ -784,11 +833,25 @@
   }
 
   // ===== HUD 更新 =====
+  // HUD 每帧刷新，但绝大多数帧数值不变；用一层脏检查避免无谓的 DOM 写入
+  // （textContent 写入会触发样式重算，60fps × 8 个节点是实打实的开销）。
+  const hudCache = Object.create(null);
+  function setText(id, txt) {
+    if (hudCache[id] === txt) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = txt;
+    hudCache[id] = txt;
+  }
+  function clearHudCache() {
+    for (const k in hudCache) delete hudCache[k];
+  }
+
   function updateHud() {
     // 游戏中才更新 HUD；菜单状态下不写 DOM，避免覆盖默认显示
     if (!state.gameStarted) return;
     if (!state.level) return;
-    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    const set = setText;
     set('budgetVal', Math.round(state.budget));
     const waveGroup = document.getElementById('waveGroup');
     if (waveGroup) waveGroup.style.display = state.mode === 'campaign' ? '' : 'none';
@@ -805,29 +868,30 @@
       if (state.duration > 0) {
         timeGroup.style.display = '';
         const sec = Math.ceil(state.remainingTime);
-        timeVal.textContent = sec + 's';
+        set('timeVal', sec + 's');
         timeVal.style.color = sec <= 10 ? '#ff7a7a' : '';
       } else {
         timeGroup.style.display = 'none';
       }
     }
-    const modeTag = document.getElementById('modeTag');
-    if (modeTag) {
-      modeTag.textContent = state.mode === 'campaign'
-        ? `闯关·${state.level.name}`
-        : `生存·${state.level.name}`;
-    }
+    set('modeTag', state.mode === 'campaign'
+      ? `闯关·${state.level.name}`
+      : `生存·${state.level.name}`);
     const healthFill = document.getElementById('healthFill');
     if (healthFill) {
       const pct = clamp(state.health / (state.level.health || 1), 0, 1) * 100;
-      healthFill.style.width = pct + '%';
-      healthFill.style.background = pct < 30
-        ? 'linear-gradient(90deg,#ff6b6b,#ffa36b)'
-        : 'linear-gradient(90deg,#43e0a0,#6fdcff)';
+      const pctStr = pct.toFixed(1) + '%';
+      if (hudCache.__healthPct !== pctStr) {          // 血条同样做脏检查
+        hudCache.__healthPct = pctStr;
+        healthFill.style.width = pctStr;
+        healthFill.style.background = pct < 30
+          ? 'linear-gradient(90deg,#ff6b6b,#ffa36b)'
+          : 'linear-gradient(90deg,#43e0a0,#6fdcff)';
+      }
     }
+    set('healthVal', String(state.health));
     const healthVal = document.getElementById('healthVal');
     if (healthVal) {
-      healthVal.textContent = state.health;
       // 仅在闪烁时临时改色；结束后清空 inline style，回退到 CSS 默认色
       healthVal.style.color = state.healthFlash > 0 ? '#ff7a7a' : '';
     }
@@ -842,8 +906,12 @@
 
   // ===== 开始游戏 =====
   function startGame(opts) {
-    state.mode = opts.mode || 'survival';
-    state.levelIndex = opts.levelIndex || 0;
+    // 兼容/防御：允许不传或误传非对象（历史调用曾有 startGame('survival', 0)）
+    const o = (opts && typeof opts === 'object') ? opts : (typeof opts === 'string' ? { mode: opts } : {});
+    clearHudCache();
+    stepAccumulator = 0;        // 丢弃上一局残留的时间片
+    state.mode = o.mode || 'survival';
+    state.levelIndex = o.levelIndex || 0;
     // 闯关模式解锁校验：仅允许已解锁的关卡
     if (state.mode === 'campaign' && !isLevelUnlocked(state.levelIndex)) {
       return false;
@@ -856,7 +924,7 @@
     // 按用户选择的开局方式处理「沿用上次布防」：
     // - keepSetup 为 true：尝试应用上次结算时保存的布防
     // - keepSetup 为 false / 未提供：从空场开始（仅母星），不读取存档
-    if (opts.keepSetup) {
+    if (o.keepSetup) {
       applySavedSetup();
     }
     // 注意：开局不再调用 saveSetup（避免把空场覆盖真实存档）；
@@ -898,6 +966,8 @@
   function backToMenu() {
     state.gameStarted = false;
     state.gameOver = false;
+    clearHudCache();
+    stepAccumulator = 0;
     // 重置 controls 按钮状态（避免重开二次确认武装残留）
     const restartBtn = document.getElementById('restartBtn');
     if (restartBtn) {
@@ -931,7 +1001,7 @@
       mode: state.mode,
       levelName: state.level ? state.level.name : '',
       wave: state.wave,
-      totalWaves: (state.mode === 'campaign' && Array.isArray(state.level.waves)) ? state.level.waves.length : null,
+      totalWaves: (state.mode === 'campaign' && state.level && Array.isArray(state.level.waves)) ? state.level.waves.length : null,
       score: integerScore(),
       cleared: state.asteroidsCleared,
       spent: state.totalSpent,

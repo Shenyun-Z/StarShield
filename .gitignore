@@ -8,3 +8,8 @@ Thumbs.db
 
 # 依赖（本项目为零依赖纯前端，留空以防万一）
 node_modules/
+
+# 临时发布文件（commit message / release notes，避免误提交）
+_commit_msg.txt
+_release_notes.md
+_tmp_*

@@ -3,6 +3,37 @@
 > 相对 GitHub 上一版本（origin/main）的全部改动记录。
 > 更新日志仅记录于此文件与 git commit message，不写入 README.md。
 
+## [v1.5] 2026-09-05
+
+### 物理 / 性能
+- **物理内核零分配成对对称化**：`stepSystem` 由「每个天体每步调用 2 次 `fieldAt` + Map + 每次 `{fx,fy}` 临时对象」改为复用模块级 `Float64Array` 暂存 + 牛顿第三定律成对累加（每对天体只算一次、方向相反）。N=20/40/60 实测提速 **2.9× / 3.7× / 4.6×**；数值与旧实现等价（60 步最大相对偏差 2.5e-16，纯浮点舍入级），同输入两次运行逐位一致。预测器每帧上百步积分带来的临时分配与 GC 压力随之消除。
+- **帧率无关累加步进**：主循环原「每帧恒推进 1/60 秒」——120Hz 高刷屏游戏 2 倍速、掉帧变慢。改为 `stepFrame(dtReal)` 按真实时间累加、攒够固定物理步长 `DT=1/60` 才推进；单帧最多补 3 步（`MAX_SUBSTEPS`）、积压超限丢弃，`dtReal` 钳制 0.25s（切后台防雪崩）；慢动作 `timeScale` 缩放累加速率而非步长，物理步长恒定 → 预测线与实际轨迹保持一致。`input.js` 用 rAF 时间戳计算真实帧间隔；`startGame`/`backToMenu` 丢弃残留时间片。
+
+### 逻辑缺陷
+- **闯关 `edge` 字段失效**：`levels-campaign` 产出 `'left'/'right'` 字符串，`spawnThreat` 却按 `edge === 0/1/2` 数值分支判断，所有威胁固定从左侧生成。新增 `normalizeEdge()` 字符串/数值双向兼容；同时清理被内层变量遮蔽的 `baseAng/ang` 死代码。
+- **刷分漏洞**：玩家投掷的星体飞出屏幕边界也被 `registerClear()` 计为「拦截清除」得分 → 出界计分限定为陨石/彗星。
+- **波次空转自增**：`startWave` 先 `wave++` 再判空，波次耗尽后每 0.5s 空转累加（HUD 出现 25/22）→ 空波次回退 `wave--`。
+- **惩罚明细失真**：`score` 为 0 时仍累计 `scorePenalty += 8` → 只累计实际扣除量，结算面板与真实扣分一致。
+- **互撞动画双播**：一次星体互撞播放两次音效/火花（`starStarCollision(b, b)`）→ physics 通过 `explodedWith` 记录撞击对手，单次触发。
+- **生存模式来袭瞄准母星**：原 `baseAng + (angle - baseAng)` 等价于纯随机 2π，约半数威胁背向母星飞走并白送拦截分 → 偏角随难度收窄（`lerp(0.60, 0.15, difficulty)` rad），早期宽容、后期精准。
+- **屏闪从未显示**：`state.flashes` 只写不画（render 只绘制从未被赋值的 `flashRed`）→ render 按 life/intensity 渐隐绘制 flashes（红=母星受击、紫=黑洞吞噬/消失），删除无效 `flashRed` 字段。
+- **预测时长分叉**：绘制端硬编码 5s 与 `physics.PREDICT_DUR=6` 不一致 → 统一取常量（3 段 × 2s，与 README「未来 6 秒」一致）。
+
+### 一致性 / 文档
+- **场景天体数据「说谎」**：闯关关卡 `scene.blackholes/stars` 从未真正生成（开局画布只有母星），但简介与卡片徽标声称存在 → 移除 `scene` 数据与 `THEMES` 的 `holes/stars` 配置；`buildIntro` 改为「开局星域内只有母星，所有引力都要由你亲手布下」；卡片徽标改为实际规模（闯关=波数、生存=限时秒数）；README 移除「场景黑洞 4000」条目。
+- **常量基准统一（以实际值为准）**：`physics.STAR_MASS` 4000→8000（与 `setupLevel` 创建的母星一致）；删除从未使用的 `physics.DT=0.01` 及其导出。
+
+### 健壮性 / 安全
+- **存档白名单化**：`applySavedSetup` 原直接信任 localStorage 中的 `mass/radius/x/y`（被篡改的 NaN 会经引力扩散污染全场）→ `tierByMass` 白名单五档质量/半径/花费、有限坐标校验、视口外与母星禁放区内丢弃、40 个上限、星能不足跳过（不再产生负星能）。
+- **解锁进度收敛**：`campaignUnlocked` 解析后 clamp 到 `[0, 关卡数]`，防手工篡改越界。
+- 指针交互：新增 `pointercancel` 处理（修复拖拽卡死）、画布禁用右键菜单、只响应鼠标左键；修复禁区提示 700ms 定时器误清新拖拽（`previewSeq` 代次号）。
+- 其它：`startGame` 非对象入参防御；HUD/血条脏检查缓存（每帧 8 次 `textContent` 写入 → 仅变化时写入）；`render` 缓存 2d context；`predictorRenderer` 未 attach 时降级不抛异常；`input` 初始化对 `game` 未就绪重试；`getCurrentRunStats` 空 level 防御。
+
+### 测试
+- 新增 `test/loop-mechanics.test.js`（12 项：60/120/240Hz 推进一致性、超长 dt 钳制、慢动作比例、闯关 edge 映射、生存瞄准、玩家星体出界不计分回归）。
+- 修正 `integration`/`result-ui` 测试中 3 处 `game.startGame('survival', 0)` 的错误参数（此前靠默认值侥幸生效）。
+- 全部 11 套测试通过、lint 0 错误。
+
 ## [本次累计改动] 2026-08-21
 
 ### -３、关卡布局修复 + 关卡简介 + 难度/确定性强化（追加）

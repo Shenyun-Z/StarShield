@@ -17,12 +17,11 @@
   /* ============ 共享常量（成员1 定义，其他人引用） ============ */
   const G = 600;            // 万有引力常数（玩法调参）
   const SOFTENING = 6;      // 软化长度(px)，防止 r→0 时除零炸裂
-  const DT = 0.01;          // 物理积分步长(s)
   const RADIUS_K = 2.5;     // 半径系数：radius = RADIUS_K * mass^(1/3)
   const STAR_R = 30;        // 母星半径(px)
-  const STAR_MASS = 4000;   // 母星默认质量（建议值，game.js 创建母星时参考）
+  const STAR_MASS = 8000;   // 母星质量（与 game.js setupLevel 创建的母星一致）
   const PREDICT_DT = 0.05;  // 预测积分步长(s)：细步长→高保真，与真实 stepSystem 偏差更小、轨迹更顺滑
-  const PREDICT_DUR = 6;    // 预测时长(s) = 3 段 × 2s，与提示线分段一致
+  const PREDICT_DUR = 6;    // 预测时长(s) = 3 段 × 2s，与提示线分段一致（绘制端统一取此值）
   const ARROW_SCALE = 0.5;  // 拖拽箭头：1px = 0.5 m/s（输入换算用）
 
   /* ============ 天体结构 ============ */
@@ -132,48 +131,89 @@
           // 任意两个非母星天体物理接触 → 一起炸毁（双方 exploded）
           a.dead = true; a.exploded = true;
           b.dead = true; b.exploded = true;
+          // 记录撞击对手，供 game.js 只触发一次爆炸动画/音效（避免同一次碰撞播两遍）
+          a.explodedWith = b;
+          b.explodedWith = a;
         }
       }
     }
   }
 
+  /* ============ 加速度累加（成对对称 · 零临时对象） ============ */
+  // 原实现每步对每个天体调用两次 fieldAt，每次返回 {fx,fy} 新对象：
+  // 预测器每帧要跑上百步积分，会产生数万次临时分配与 GC 压力。
+  // 这里改为复用模块级暂存数组 + 利用牛顿第三定律（每对天体只算一次，
+  // a 受 +f、b 受 −f），计算量减半、分配为零，数值结果与 fieldAt 完全一致。
+  let _ax = new Float64Array(256), _ay = new Float64Array(256);
+  let _bx = new Float64Array(256), _by = new Float64Array(256);
+  const _live = [];
+
+  function ensureCapacity(n) {
+    if (n <= _ax.length) return;
+    let cap = _ax.length;
+    while (cap < n) cap *= 2;
+    _ax = new Float64Array(cap); _ay = new Float64Array(cap);
+    _bx = new Float64Array(cap); _by = new Float64Array(cap);
+  }
+
+  // 将 list 中每个天体所受引力加速度写入 outX/outY（单位质量）
+  function accumulateAccel(list, outX, outY) {
+    const n = list.length;
+    const s2 = SOFTENING * SOFTENING;
+    outX.fill(0, 0, n);
+    outY.fill(0, 0, n);
+    for (let i = 0; i < n; i++) {
+      const a = list[i];
+      if (a.dead) continue;
+      let axi = 0, ayi = 0;
+      for (let j = i + 1; j < n; j++) {
+        const b = list[j];
+        if (b.dead) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const r2 = dx * dx + dy * dy + s2;
+        const invR3 = 1 / (r2 * Math.sqrt(r2));
+        const ka = G * b.mass * invR3;   // a 的加速度系数
+        const kb = G * a.mass * invR3;   // b 的加速度系数（方向相反）
+        axi += ka * dx; ayi += ka * dy;
+        outX[j] -= kb * dx; outY[j] -= kb * dy;
+      }
+      outX[i] += axi; outY[i] += ayi;
+    }
+  }
+
   /* ============ 全 N 体一步积分（Verlet 辛积分） ============ */
-  // stepSystem(bodies, dt) → 原地更新所有天体位置/速度，含合并与洛希判定。
+  // stepSystem(bodies, dt) → 原地更新所有天体位置/速度，含碰撞判定。
   // 母星固定不动（被守护对象）；暂停时 game.js 不调用本函数即可冻结演化。
   function stepSystem(bodies, dt) {
-    const live = bodies.filter(function (b) { return !b.dead; });
+    ensureCapacity(bodies.length);
+    _live.length = 0;
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (!b.dead) _live.push(b);
+    }
+    const n = _live.length;
 
     // 当前加速度
-    const acc = new Map();
-    for (let i = 0; i < live.length; i++) {
-      const b = live[i];
-      acc.set(b, fieldAt(live, b.x, b.y, b));
-    }
+    accumulateAccel(_live, _ax, _ay);
     // 位置推进（速度 Verlet）
-    for (let i = 0; i < live.length; i++) {
-      const b = live[i];
-      if (b.isStar || b.immovable) continue; // 母星锚定
-      const a = acc.get(b);
-      b.x += b.vx * dt + 0.5 * a.fx * dt * dt;
-      b.y += b.vy * dt + 0.5 * a.fy * dt * dt;
+    for (let i = 0; i < n; i++) {
+      const b = _live[i];
+      if (b.isStar || b.immovable) continue; // 母星/黑洞锚定
+      b.x += b.vx * dt + 0.5 * _ax[i] * dt * dt;
+      b.y += b.vy * dt + 0.5 * _ay[i] * dt * dt;
     }
     // 新加速度
-    const acc2 = new Map();
-    for (let i = 0; i < live.length; i++) {
-      const b = live[i];
-      acc2.set(b, fieldAt(live, b.x, b.y, b));
-    }
+    accumulateAccel(_live, _bx, _by);
     // 速度推进
-    for (let i = 0; i < live.length; i++) {
-      const b = live[i];
+    for (let i = 0; i < n; i++) {
+      const b = _live[i];
       if (b.isStar || b.immovable) continue;
-      const a1 = acc.get(b), a2 = acc2.get(b);
-      b.vx += 0.5 * (a1.fx + a2.fx) * dt;
-      b.vy += 0.5 * (a1.fy + a2.fy) * dt;
+      b.vx += 0.5 * (_ax[i] + _bx[i]) * dt;
+      b.vy += 0.5 * (_ay[i] + _by[i]) * dt;
     }
 
-    // 合并 + 洛希撕裂 + 撞星
-    resolveCollisions(live);
+    // 撞星 / 互撞 / 黑洞吞噬
+    resolveCollisions(_live);
   }
 
   /* ============ 辅助：移除 dead 天体 ============ */
@@ -185,7 +225,7 @@
   /* ============ 导出 ============ */
   const physics = {
     // 常量
-    G: G, SOFTENING: SOFTENING, DT: DT,
+    G: G, SOFTENING: SOFTENING,
     RADIUS_K: RADIUS_K, STAR_R: STAR_R, STAR_MASS: STAR_MASS,
     PREDICT_DT: PREDICT_DT, PREDICT_DUR: PREDICT_DUR,
     ARROW_SCALE: ARROW_SCALE,

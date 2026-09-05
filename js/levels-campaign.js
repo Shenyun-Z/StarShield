@@ -19,15 +19,16 @@
   }
   function clamp(v, a, b) { return (v < a) ? a : (v > b ? b : v); }
 
-  // 4 种重力场景主题，按关卡分组循环（每章 6 关），保证多样性与递进
-  // theme 决定场景中额外放置的黑洞/恒星，以及默认来袭边角偏好
+  // 6 种星域主题，按关卡分组循环，仅作为关卡命名风味（不生成额外场景天体）。
+  // 历史版本曾在此定义 holes/stars 作为开局场景黑洞与恒星，但它们从未被生成，
+  // 与实战不符（开局画布只有母星），故已移除，避免数据继续"说谎"。
   const THEMES = [
-    { key: 'calm',   name: '宁静星域', holes: 0, stars: 0 },
-    { key: 'dual',   name: '双星轨道', holes: 2, stars: 0 },
-    { key: 'well',   name: '深井引力', holes: 1, stars: 0 },
-    { key: 'binary', name: '双子恒星', holes: 0, stars: 2 },
-    { key: 'maze',   name: '乱流迷宫', holes: 3, stars: 1 },
-    { key: 'storm',  name: '风暴核心', holes: 4, stars: 2 },
+    { key: 'calm',   name: '宁静星域' },
+    { key: 'dual',   name: '双星轨道' },
+    { key: 'well',   name: '深井引力' },
+    { key: 'binary', name: '双子恒星' },
+    { key: 'maze',   name: '乱流迷宫' },
+    { key: 'storm',  name: '风暴核心' },
   ];
 
   const N = 30; // 总关卡数
@@ -35,19 +36,17 @@
   const rng = mulberry32(0x5CA1AB1E); // 固定种子 → 可复现
 
   // 基于关卡特征生成确定性简介（无随机，所有用户一致）。
-  // themeName 描述场景引力环境；stage 描述整体难度阶段；cometPct 描述威胁构成。
-  function buildIntro(theme, idx, waveCount, holeN, starN, cometRatio) {
+  // theme 仅作为星域名称风味；stage 描述整体难度阶段；cometPct 描述威胁构成。
+  // 注意：scene 中的黑洞/恒星不作为开局场景天体生成（开局画布只有母星），
+  // 因此简介不得声称「场内有黑洞/恒星」，必须与实战一致。
+  function buildIntro(theme, idx, waveCount, cometRatio) {
     const stage =
       idx < 6 ? '入门关，适合熟悉引力布防的基本操作。'
         : idx < 12 ? '挑战升级，来袭更密、更快，考验你的布防节奏。'
         : idx < 18 ? '关卡核心期，多目标同屏，需兼顾拦截与防守。'
         : idx < 24 ? '高手关卡，高速彗星与密集波次轮番轰炸。'
         : '终局挑战，极限速度与强度的终极考验。';
-    const env =
-      holeN > 0 && starN > 0 ? `场内有 ${holeN} 个黑洞与 ${starN} 颗恒星交织引力场。`
-        : holeN > 0 ? `场内有 ${holeN} 个黑洞形成引力漩涡。`
-        : starN > 0 ? `场内有 ${starN} 颗恒星提供强大引力。`
-        : '场内无额外引力天体，母星孤悬星海。';
+    const env = '开局星域内只有母星，所有引力都要由你亲手布下。';
     const comet = Math.round(cometRatio * 100);
     return `${theme.name}。${stage}${env}来袭威胁中约 ${comet}% 为高速彗星，共 ${waveCount} 波。`;
   }
@@ -66,30 +65,6 @@
     const difficulty = Number((0.5 + t * 0.95).toFixed(2)); // 0.50 → 1.45
     // 彗星占比：0.15 → 0.5 渐增（更难拦截）
     const cometRatio = clamp(0.15 + t * 0.35, 0.15, 0.5);
-
-    // 场景额外天体（黑洞/恒星），按主题 + 难度逐步增多
-    const blackholes = [];
-    const stars = [];
-    let holeMass = 2600 + Math.round(t * 2600);
-    for (let h = 0; h < theme.holes; h++) {
-      const ang = (Math.PI * 2 / theme.holes) * h + 0.4;
-      const dist = 200 + Math.round(t * 90);
-      blackholes.push({
-        dx: Math.round(Math.cos(ang) * dist),
-        dy: Math.round(Math.sin(ang) * dist),
-        mass: holeMass, radius: 11 + Math.round(t * 5),
-      });
-    }
-    let starMass = 4200 + Math.round(t * 3200);
-    for (let s = 0; s < theme.stars; s++) {
-      const ang = (Math.PI * 2 / theme.stars) * s + 1.1;
-      const dist = 240 + Math.round(t * 70);
-      stars.push({
-        dx: Math.round(Math.cos(ang) * dist),
-        dy: Math.round(Math.sin(ang) * dist),
-        mass: starMass, radius: 14 + Math.round(t * 6),
-      });
-    }
 
     // 确定性生成波次：每波若干来袭，spread/edge/speed/mass 随难度递增
     const waves = [];
@@ -128,12 +103,11 @@
       name: '第' + roman[i] + '关 · ' + theme.name,
       desc: '难度 ' + difficulty.toFixed(2) + ' · ' + waveCount + ' 波 · 彗星 ' + Math.round(cometRatio * 100) + '%',
       // 关卡简介：介绍本关场景特色与挑战（确定性生成，所有用户一致）
-      intro: buildIntro(theme, i, waveCount, blackholes.length, stars.length, cometRatio),
+      intro: buildIntro(theme, i, waveCount, cometRatio),
       // 关卡目标（塔防式清晰文案）与结束条件，供开局横幅与结算展示
       objective: '守住母星，击退全部 ' + waveCount + ' 波来袭威胁',
       failCondition: '母星生命值（' + health + ' 点）归零',
       health, budget, difficulty,
-      scene: { blackholes: Object.freeze(blackholes), stars: Object.freeze(stars) },
       waves: Object.freeze(waves),
     }));
   }

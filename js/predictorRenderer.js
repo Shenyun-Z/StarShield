@@ -6,6 +6,11 @@ const predictorRenderer = (function () {
   let ctx, canvas;
 
   function attach(c) { canvas = c; ctx = c.getContext('2d'); }
+  // 未被 attach（或 canvas 缺失）时静默降级，避免绘制阶段抛异常打断主循环
+  function ready() {
+    if (!ctx && canvas) attach(canvas);
+    return !!ctx;
+  }
 
   // 半透明虚影星体（拖拽时跟随鼠标）
   function drawGhost(x, y, mass) {
@@ -116,12 +121,13 @@ const predictorRenderer = (function () {
   // 优化：每帧只 simulateFuture 一次，避免 O(N²) 重复积分。
   function renderTrajectories(state) {
     if (typeof predictor === 'undefined' || !predictor) return;
+    if (!ready()) return;
     const planet = state.bodies[0];
     if (!planet) return;
     if (!state.bodies || state.bodies.length === 0) return;
     // 一次前向模拟，复用给所有运动天体
     const sim = predictor.simulateFuture(state.bodies, {
-      duration: 5,
+      duration: physics.PREDICT_DUR,   // 统一取物理常量（3 段 × 2s = 6s），避免与常量分叉
       dt: physics.PREDICT_DT,
       sampleEvery: 2,
     });
@@ -140,6 +146,7 @@ const predictorRenderer = (function () {
   // 返回：成功返回 true（至少画了一条预测线）
   function drawPlacementPrediction(state, placingStars) {
     if (typeof predictor === 'undefined' || !predictor) return false;
+    if (!ready()) return false;
     if (!placingStars || placingStars.length === 0) return false;
     const planet = state.bodies[0];
     if (!planet) return false;
@@ -165,7 +172,7 @@ const predictorRenderer = (function () {
     if (injected.length === 0) return false;
     // 一次前向模拟
     const sim = predictor.simulateFuture(snapshot, {
-      duration: 5,
+      duration: physics.PREDICT_DUR,
       dt: physics.PREDICT_DT,
       sampleEvery: 2,
     });

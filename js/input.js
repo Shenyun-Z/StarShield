@@ -5,6 +5,7 @@
   const stars = [];           // 布防预览
   let placing = false;
   let dragStart = null;
+  let previewSeq = 0;         // 预览代次：用于让过期的定时器失效（避免误清新拖拽）
 
   // 选择状态
   let selMode = 'survival';
@@ -70,17 +71,19 @@
         + (idx === selLevelIndex && !locked ? ' selected' : '')
         + (locked ? ' locked' : '');
       el.dataset.idx = idx;
-      const bh = (lv.scene.blackholes || []).length;
-      const st = (lv.scene.stars || []).length;
+      const totalWaves = Array.isArray(lv.waves) ? lv.waves.length : null;
+      // 徽标展示本关规模：闯关=波数，生存=限时秒数
+      // （曾显示 scene 的黑洞/恒星数量，但那些天体并不生成，属误导，已移除）
+      const badge = totalWaves != null ? (totalWaves + ' 波') : (Math.round(lv.duration || 0) + 's');
       el.innerHTML = locked
         ? `
           <div class="lc-name">${idx + 1} 关 · 未解锁<span class="badge">🔒</span></div>
           <div class="lc-desc">通关前一关后开启</div>
         `
         : `
-          <div class="lc-name">${lv.name}<span class="badge">${bh}BH ${st}★</span></div>
+          <div class="lc-name">${lv.name}<span class="badge">${badge}</span></div>
           <div class="lc-desc">${lv.intro || lv.desc || ''}</div>
-          <div class="lc-meta">血 ${lv.health} · 星能 ${lv.budget} · ${lv.desc || ''}</div>
+          <div class="lc-meta">血 ${lv.health} · 星能 ${lv.budget}${lv.difficulty != null ? ' · 难度 ' + Number(lv.difficulty).toFixed(2) : ''}</div>
         `;
       el.addEventListener('click', () => {
         if (locked) {
@@ -301,15 +304,19 @@
 
   function pointerDown(e) {
     if (!game.state.gameStarted || game.state.gameOver) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;   // 只响应鼠标左键
     const p = canvasPoint(e);
     if (isInsideForbidden(p)) {
       // 在禁区按下：临时显示禁区圈（不进入 placing 状态）
       stars.length = 0;
       stars.push({ x: p.x, y: p.y, radius: 0, forbidden: true });
-      setTimeout(() => { stars.length = 0; }, 700);
+      // 用代次号让旧定时器失效：否则用户在 700ms 内开始新拖拽时会被误清空
+      const seq = ++previewSeq;
+      setTimeout(() => { if (seq === previewSeq) stars.length = 0; }, 700);
       return;
     }
     placing = true;
+    previewSeq++;                 // 使禁区提示的待触发清理失效
     dragStart = p;
     stars.length = 0;
     stars.push({
@@ -369,6 +376,14 @@
     const res = game.placeStar(selStarType, p, { vx, vy });
     if (!res.ok) flashMessage(res.reason || '无法放置');
     else audio.play('place');
+  }
+  // 指针被系统取消（手势中断/设备切换）：放弃本次拖拽，不放置星体
+  function pointerCancel() {
+    if (!placing) return;
+    placing = false;
+    dragStart = null;
+    previewSeq++;
+    stars.length = 0;
   }
 
   // ===== 结算面板 =====
@@ -522,17 +537,31 @@
   window.__showResult = showResult;
 
   // ===== 主循环 =====
-  function loop() {
+  // 用 rAF 提供的时间戳计算真实帧间隔并交给 game.stepFrame 做固定步累加，
+  // 使 60Hz/120Hz/掉帧下的游戏速度一致（旧的“每帧恒推进 1/60 秒”在高刷屏上是 2 倍速）。
+  let lastFrameTs = 0;
+  function loop(ts) {
+    const now = (typeof ts === 'number' && Number.isFinite(ts)) ? ts : performance.now();
+    const dtReal = lastFrameTs ? (now - lastFrameTs) / 1000 : 1 / 60;
+    lastFrameTs = now;
     // 关键：先同步 placingStars，再 render，避免一帧延迟
     window.__placingStars = stars;
-    game.stepFrame();
+    game.stepFrame(dtReal);
     render(canvas, game.state);
     game.updateHud();
     requestAnimationFrame(loop);
   }
 
   // ===== 初始化 =====
+  let initRetried = false;
   function init() {
+    // game.js 必须先于本模块执行（index.html 中位于其后）。若因脚本顺序调整
+    // 导致 game 尚未就绪，等待 load 事件重试一次，避免整个界面静默失效。
+    if (typeof game === 'undefined' || !game) {
+      if (!initRetried) { initRetried = true; window.addEventListener('load', init); }
+      else console.error('StarShield: game 模块未加载，初始化失败');
+      return;
+    }
     if (typeof predictorRenderer !== 'undefined' && predictorRenderer.attach) {
       predictorRenderer.attach(canvas);
     }
@@ -549,6 +578,9 @@
     canvas.addEventListener('pointerdown', pointerDown);
     window.addEventListener('pointermove', pointerMove);
     window.addEventListener('pointerup', pointerUp);
+    window.addEventListener('pointercancel', pointerCancel);
+    // 右键菜单会打断拖拽流程，画布上禁用
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     loop();
   }
 

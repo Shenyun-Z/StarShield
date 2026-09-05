@@ -3,6 +3,16 @@
 
   let dpr = 1;
   const GLOW = 'rgba(120,170,255,0.85)';
+  // 缓存 canvas 上下文：render() 每帧调用，getContext 没必要每帧走一遍查找
+  let cachedCanvas = null;
+  let cachedCtx = null;
+  function contextOf(canvas) {
+    if (canvas !== cachedCanvas) {
+      cachedCanvas = canvas;
+      cachedCtx = canvas.getContext('2d');
+    }
+    return cachedCtx;
+  }
 
   // 引力场流线缓存
   let fieldLines = [];   // {x,y,dx,dy,strength}
@@ -176,7 +186,8 @@
 
   function render(canvas, state) {
     if (canvas.width !== window.innerWidth * dpr) resize(canvas);
-    const ctx = canvas.getContext('2d');
+    const ctx = contextOf(canvas);
+    if (!ctx) return;                       // 上下文不可用（极端环境）时安全退出
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // 背景
@@ -194,7 +205,8 @@
     drawField(ctx, state);
 
     // 预测轨迹
-    if (state.showHint && state.gameStarted && !state.gameOver) {
+    if (state.showHint && state.gameStarted && !state.gameOver
+        && typeof predictorRenderer !== 'undefined' && predictorRenderer) {
       predictorRenderer.renderTrajectories(state);
     }
 
@@ -204,7 +216,8 @@
     // 拖放预测线（先把 placingStars 注入当前系统，模拟其轨迹）
     const ps = window.__placingStars;
     if (ps && ps.length && state.showHint && state.gameStarted && !state.gameOver) {
-      if (predictorRenderer && predictorRenderer.drawPlacementPrediction) {
+      if (typeof predictorRenderer !== 'undefined' && predictorRenderer
+          && predictorRenderer.drawPlacementPrediction) {
         predictorRenderer.drawPlacementPrediction(state, ps);
       }
     }
@@ -293,10 +306,15 @@
 
     ctx.restore();
 
-    // 屏闪（红色覆盖），在 ctx.restore() 之后画，不受屏震影响
-    if (state.flashRed > 0) {
-      ctx.fillStyle = `rgba(255,80,90,${state.flashRed * 0.35})`;
-      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    // 屏闪（覆盖全屏），在 ctx.restore() 之后画，不受屏震影响。
+    // state.flashes 由 game.addFlash() 写入（红=母星受击、紫=黑洞吞噬/消失）。
+    if (state.flashes && state.flashes.length) {
+      for (const f of state.flashes) {
+        const a = clamp01(f.life / (f.maxLife || 0.3)) * (f.intensity || 1);
+        ctx.fillStyle = String(f.color || 'rgba(255,80,90,0.35)')
+          .replace(/[\d.]+\)$/g, (a * 0.35).toFixed(2) + ')');
+        ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+      }
     }
   }
 

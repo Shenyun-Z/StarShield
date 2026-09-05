@@ -55,7 +55,7 @@ function assert(cond, msg) {
 }
 
 // ---- 1) 统计字段完整性 ----
-game.startGame('survival', 0);
+game.startGame({ mode: 'survival', levelIndex: 0 });
 // 模拟一次拦截清除 + 一次母星受击，构造明细
 const st = game.state;
 // 直接调用内部计分入口：通过 registerClear 不存在于 window，改用 stepFrame 自然路径较繁，
