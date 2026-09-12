@@ -1,0 +1,14 @@
+{
+  "name": "starshield",
+  "version": "1.6.0",
+  "private": true,
+  "description": "星盾防线 StarShield —— 纯前端零依赖引力塔防游戏（无构建、无运行时依赖）",
+  "scripts": {
+    "test": "node test/run-all.js",
+    "test:syntax": "node test/run-all.js --syntax-only"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "SEE LICENSE IN LICENSE"
+}

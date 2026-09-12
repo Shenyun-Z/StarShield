@@ -95,9 +95,9 @@ assert(elCache['sdSurviveRow'].style.display === '', '生存模式显示生存�
 
 // ---- 3) 闯关模式隐藏生存行 + modeMul>1 ----
 game.startGame({ mode: 'campaign', levelIndex: 2 });
+// M2：总分无影子字段，由明细派生（300 + 50 - 8 = 342）
 game.state.scoreIntercept = 300; game.state.scoreWaveBonus = 50; game.state.scorePenalty = 8;
 game.state.asteroidsCleared = 10;
-game.state.score = 300 + 50 - 8;
 showResult('defeat');
 assert(elCache['sdSurviveRow'].style.display === 'none', '闯关模式隐藏生存奖励行');
 assert(elCache['sdModeMul'].textContent === '×' + (1 + 2 * 0.15).toFixed(2), '闯关模式 modeMul 随关卡序号 = ' + elCache['sdModeMul'].textContent);

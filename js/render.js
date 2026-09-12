@@ -112,9 +112,9 @@
         r = b.radius * (0.6 + 0.4 * t);          // 收缩到 60%
         alphaBoost = (1 - t) * 0.5;
       }
-      // 剩余时间紫色脉冲（最后 5 秒）
-      let remaining = 0;
-      if (b.expiresAt) remaining = Math.max(0, (b.expiresAt - performance.now()) / 1000);
+      // 剩余时间紫色脉冲（最后 5 秒）。剩余寿命由 game 按游戏时钟维护（M1），
+      // 渲染端只读取，不再用墙钟换算。
+      const remaining = Number.isFinite(b.lifeRemaining) ? Math.max(0, b.lifeRemaining) : 0;
       const pulse = remaining > 0 && remaining <= 5
         ? 0.3 + 0.3 * Math.abs(Math.sin(t * 12))
         : 0;

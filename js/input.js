@@ -6,11 +6,11 @@
   let placing = false;
   let dragStart = null;
   let previewSeq = 0;         // 预览代次：用于让过期的定时器失效（避免误清新拖拽）
+  let activePointerId = null; // 当前拖拽所属指针（多点触控下防止串扰，并为指针捕获提供 id）
 
   // 选择状态
   let selMode = 'survival';
   let selLevelIndex = 0;
-  let keepSetup = false;
   let selStarType = 'large';
 
   // ===== 工具 =====
@@ -124,37 +124,16 @@
     const s = game.bestForMode('survival');
     const c = game.getCampaignUnlocked();
     el.innerHTML = `本机成就：生存最佳 ${s > 0 ? s + ' 分' : '—'}　|　闯关已通关 ${c > 0 ? c + ' 关' : '0 关'}`;
-  }
-
-  // ===== 菜单：开局方式 =====
-  // 刷新「开局方式」显示：无存档则隐藏"沿用上次布防"并强制从零开始（供 bindSetupOptions 与 doClearProgress 共用）
-  function refreshSetupOptions() {
-    const fresh = document.getElementById('startFresh');
-    const withS = document.getElementById('startWithSetup');
-    const hint = document.getElementById('setupHint');
-    if (!withS) return;
-    let has = false;
-    try { has = !!localStorage.getItem('starshield_setup'); } catch (e) {}
-    withS.style.display = has ? '' : 'none';
-    if (!has) { keepSetup = false; if (fresh) fresh.classList.add('selected'); if (withS) withS.classList.remove('selected'); }
-    if (hint) hint.textContent = keepSetup
-      ? '将沿用上次布防的星体位置'
-      : '本次从空场开始布防';
-  }
-  function bindSetupOptions() {
-    const fresh = document.getElementById('startFresh');
-    const withS = document.getElementById('startWithSetup');
-    if (!fresh || !withS) return;
-    fresh.addEventListener('click', () => {
-      fresh.classList.add('selected'); withS.classList.remove('selected');
-      keepSetup = false; refreshSetupOptions();
-    });
-    withS.addEventListener('click', () => {
-      withS.classList.add('selected'); fresh.classList.remove('selected');
-      keepSetup = true; refreshSetupOptions();
-    });
-    fresh.classList.add('selected');
-    refreshSetupOptions();
+    // 存档异常提示（M7）：菜单遮罩层级高于 .message 轻提示，故直接渲染进菜单区域
+    if (typeof game.takeWarning === 'function') {
+      const w = game.takeWarning();
+      if (w) {
+        const tip = document.createElement('div');
+        tip.className = 'menu-warn';
+        tip.textContent = '⚠ ' + w;
+        el.appendChild(tip);
+      }
+    }
   }
 
   // ===== 菜单：唯一开始按钮 =====
@@ -162,7 +141,7 @@
     const btn = document.getElementById('startBtn');
     btn.addEventListener('click', () => {
       audio.unlock();
-      game.startGame({ mode: selMode, levelIndex: selLevelIndex, keepSetup });
+      game.startGame({ mode: selMode, levelIndex: selLevelIndex });
     });
   }
 
@@ -217,11 +196,10 @@
     });
     restartBtn.addEventListener('click', () => {
       if (restartBtn.dataset.armed === '1') {
-        // 再来一局：同一关卡重启
+        // 再来一局：同一关卡重启（从零布防）
         game.startGame({
           mode: game.state.mode,
           levelIndex: game.state.levelIndex,
-          keepSetup: false,
         });
         restartBtn.dataset.armed = '0';
         restartBtn.textContent = '重新开始';
@@ -278,17 +256,14 @@
   function doClearProgress() {
     game.clearAllProgress();
     game.backToMenu();
-    // 重置选择状态：回到生存模式第 0 关 + 从零开始布防
+    // 重置选择状态：回到生存模式第 0 关
     selMode = 'survival';
     selLevelIndex = 0;
-    keepSetup = false;
     document.querySelectorAll('.mode-card').forEach(c => {
       c.classList.toggle('selected', c.dataset.mode === selMode);
     });
     renderLevelCards();
     renderCtaHint();
-    // 刷新「开局方式」显示（存档已清空 → 隐藏"沿用上次布防"、回"从零开始"）
-    refreshSetupOptions();
     if (typeof window.__refreshMenuBest === 'function') window.__refreshMenuBest();
     flashMessage('进度已清除');
   }
@@ -302,9 +277,22 @@
   const DRAG_MAX_SPEED = 420;            // 封顶初速
   const DRAG_MIN_DISTANCE = 4;           // 小于 4 px 视为点击（零初速放置）
 
+  // 指针归属：无 pointerId 的环境（旧浏览器 / 测试桩）视为唯一指针，保持兼容
+  function isActivePointer(e) {
+    if (activePointerId === null) return true;
+    return !!e && e.pointerId === activePointerId;
+  }
+  function releaseCapture() {
+    if (activePointerId !== null && typeof canvas.releasePointerCapture === 'function') {
+      try { canvas.releasePointerCapture(activePointerId); } catch (err) {}
+    }
+    activePointerId = null;
+  }
+
   function pointerDown(e) {
     if (!game.state.gameStarted || game.state.gameOver) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;   // 只响应鼠标左键
+    if (placing) return;                                       // 已有拖拽进行中，忽略第二根手指
     const p = canvasPoint(e);
     if (isInsideForbidden(p)) {
       // 在禁区按下：临时显示禁区圈（不进入 placing 状态）
@@ -318,6 +306,12 @@
     placing = true;
     previewSeq++;                 // 使禁区提示的待触发清理失效
     dragStart = p;
+    // 指针捕获（H4）：把后续 move/up 绑定到 canvas，避免指针在窗口外释放时
+    // 收不到 pointerup 导致 placing 永久为 true（幽灵预览/持续误拖拽）。
+    activePointerId = (e.pointerId != null) ? e.pointerId : null;
+    if (activePointerId !== null && typeof canvas.setPointerCapture === 'function') {
+      try { canvas.setPointerCapture(activePointerId); } catch (err) {}
+    }
     stars.length = 0;
     stars.push({
       x: p.x, y: p.y,
@@ -330,6 +324,7 @@
   }
   function pointerMove(e) {
     if (!placing) return;
+    if (!isActivePointer(e)) return;
     const p = canvasPoint(e);
     // 预览中心 = 拖拽起点；指针只是"投掷方向指示器"
     const dx = p.x - dragStart.x;
@@ -357,10 +352,12 @@
   }
   function pointerUp(e) {
     if (!placing) return;
+    if (!isActivePointer(e)) return;
     placing = false;
     const p = dragStart;
     const last = stars[0];
     stars.length = 0;
+    releaseCapture();
     if (!p) return;
     // 计算初速（沿指针方向）
     let vx = 0, vy = 0;
@@ -377,13 +374,16 @@
     if (!res.ok) flashMessage(res.reason || '无法放置');
     else audio.play('place');
   }
-  // 指针被系统取消（手势中断/设备切换）：放弃本次拖拽，不放置星体
-  function pointerCancel() {
+  // 指针被系统取消（手势中断/设备切换/窗口失焦）：放弃本次拖拽，不放置星体。
+  // 事件可选：blur 等场景无 pointerId，视为无条件取消。
+  function pointerCancel(e) {
     if (!placing) return;
+    if (e && !isActivePointer(e)) return;      // 非活动指针的 cancel 忽略
     placing = false;
     dragStart = null;
     previewSeq++;
     stars.length = 0;
+    releaseCapture();
   }
 
   // ===== 结算面板 =====
@@ -475,7 +475,6 @@
       game.startGame({
         mode: game.state.mode,
         levelIndex: game.state.levelIndex,
-        keepSetup: false,
       });
     });
     document.getElementById('resultMenu').addEventListener('click', () => {
@@ -487,7 +486,7 @@
       nextBtn.addEventListener('click', () => {
         const nextIdx = game.state.levelIndex + 1;
         if (game.isLevelUnlocked(nextIdx)) {
-          game.startGame({ mode: 'campaign', levelIndex: nextIdx, keepSetup: false });
+          game.startGame({ mode: 'campaign', levelIndex: nextIdx });
         } else {
           flashMessage('请先通关当前关以解锁下一关');
         }
@@ -539,16 +538,44 @@
   // ===== 主循环 =====
   // 用 rAF 提供的时间戳计算真实帧间隔并交给 game.stepFrame 做固定步累加，
   // 使 60Hz/120Hz/掉帧下的游戏速度一致（旧的“每帧恒推进 1/60 秒”在高刷屏上是 2 倍速）。
+  //
+  // 异常保护（H1）：循环体任意一环抛异常都不能让主循环死掉——否则画面永久冻结、
+  // 只能刷新页面。这里用 try/catch 包裹，异常后仍继续调度下一帧（瞬时异常可自愈）；
+  // 连续异常达到阈值则停止空转并给出可读提示，避免控制台刷屏 + 白耗 CPU。
+  const MAX_LOOP_ERRORS = 60;      // 连续异常上限（约 1 秒）
+  let loopErrorStreak = 0;
+  let loopStopped = false;
   let lastFrameTs = 0;
+
+  function showFatal(msg) {
+    const el = document.getElementById('message');
+    if (el) { el.textContent = msg; el.classList.add('show'); }
+  }
+
   function loop(ts) {
-    const now = (typeof ts === 'number' && Number.isFinite(ts)) ? ts : performance.now();
-    const dtReal = lastFrameTs ? (now - lastFrameTs) / 1000 : 1 / 60;
-    lastFrameTs = now;
-    // 关键：先同步 placingStars，再 render，避免一帧延迟
-    window.__placingStars = stars;
-    game.stepFrame(dtReal);
-    render(canvas, game.state);
-    game.updateHud();
+    if (loopStopped) return;
+    try {
+      const now = (typeof ts === 'number' && Number.isFinite(ts)) ? ts : performance.now();
+      const dtReal = lastFrameTs ? (now - lastFrameTs) / 1000 : 1 / 60;
+      lastFrameTs = now;
+      // 关键：先同步 placingStars，再 render，避免一帧延迟
+      window.__placingStars = stars;
+      game.stepFrame(dtReal);
+      render(canvas, game.state);
+      game.updateHud();
+      loopErrorStreak = 0;                 // 本帧正常 → 连续异常计数清零
+    } catch (err) {
+      loopErrorStreak++;
+      if (loopErrorStreak <= 5) {
+        console.error('StarShield: 主循环异常（连续第 ' + loopErrorStreak + ' 次）', err);
+      }
+      if (loopErrorStreak >= MAX_LOOP_ERRORS) {
+        loopStopped = true;
+        console.error('StarShield: 主循环连续异常，已停止以避免空转');
+        showFatal('运行异常，游戏已暂停，请刷新页面重试');
+        return;                            // 不再调度，真正停止
+      }
+    }
     requestAnimationFrame(loop);
   }
 
@@ -569,7 +596,6 @@
     renderLevelCards();
     renderCtaHint();
     renderMenuBest();
-    bindSetupOptions();
     bindStartButton();
     bindStarBar();
     bindControls();
@@ -579,8 +605,28 @@
     window.addEventListener('pointermove', pointerMove);
     window.addEventListener('pointerup', pointerUp);
     window.addEventListener('pointercancel', pointerCancel);
+    window.addEventListener('blur', () => pointerCancel());   // 切走窗口 → 无条件放弃本次拖拽
     // 右键菜单会打断拖拽流程，画布上禁用
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // 全局兜底：任何未捕获错误/未处理拒绝都要留下可追溯日志（不阻断主循环）
+    window.addEventListener('error', (e) => {
+      console.error('StarShield: 未捕获错误', (e && (e.error || e.message)) || e);
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      console.error('StarShield: 未处理的 Promise 拒绝', e && e.reason);
+    });
+    // 致命停止后的恢复通道：新开一局时由 game.startGame 调用，
+    // 避免"连续异常停帧后点『重新开始』仍然不动"（H1 的副作用）。
+    window.__resumeLoop = function () {
+      if (!loopStopped) return;
+      loopStopped = false;
+      loopErrorStreak = 0;
+      lastFrameTs = 0;
+      const el = document.getElementById('message');
+      if (el) { el.textContent = ''; el.classList.remove('show'); }
+      console.warn('StarShield: 主循环已恢复');
+      loop();
+    };
     loop();
   }
 

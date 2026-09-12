@@ -3,6 +3,38 @@
 > 相对 GitHub 上一版本（origin/main）的全部改动记录。
 > 更新日志仅记录于此文件与 git commit message，不写入 README.md。
 
+## [v1.6] 2026-09-12 · 健壮性加固（H1-H4 / M1-M8）
+
+### 高危修复
+- **H1 主循环无异常保护 → 永久停帧**：`requestAnimationFrame` 位于循环体末尾，`stepFrame/render/updateHud` 任一抛异常即不再调度下一帧，画面永久冻结且无任何提示。修复：循环体包 `try/catch`，异常后仍继续调度（瞬时异常可自愈）；连续异常达 60 次（约 1 秒）则停止空转，并在 `#message` 给出可读提示；同时注册全局 `error` / `unhandledrejection` 兜底日志。并新增 `window.__resumeLoop`（由 `startGame` 调用）——避免致命停止后点击「重新开始」仍卡死（H1 自身的副作用）。
+- **H2 生存模式实体数无上限 → O(N²) 性能雪崩**：`budget: 99999` 且 `placeStar` 不限数量，理论上可放约 2000 个星体（物理 O(N²) + 每帧预测 ~120 步积分）。修复：新增 `MAX_PLACED_BODIES = 60` 硬上限，`placeStar` 优先判定并返回「场上星体已达上限 60」，`applySavedSetup` 复用同一上限（原独立常量 40 已移除）。
+- **H3 波次可能永不结算 → 软锁**：结束条件要求「场上无威胁」，被引力拘禁在稳定轨道的威胁既不出界也不撞母星，闯关模式永久无法通关。修复：新增 `WAVE_TIMEOUT = 40`（游戏秒）与 `sweepRemainingThreats()`——队列吐空后超时即按「已被引力收编」统一结算清除（正常计分 + 视觉反馈），末波超时视为通关。
+- **H4 拖拽状态泄漏 → 幽灵预览/持续误拖拽**：`pointerdown` 在 canvas、`pointerup` 在 window 且无指针捕获，指针在窗口外释放后 `placing` 永久为 `true`。修复：`pointerdown` 调用 `setPointerCapture` 并记录 `activePointerId`，`pointermove/up/cancel` 校验指针归属（多点触控下第二指不再串扰），新增 `window.blur` 无条件取消。
+
+### 中危修复
+- **M1 黑洞生命周期用墙钟**：`performance.now()+10000` 与实际游戏时间脱钩——慢动作 0.25× 下 10 真实秒 = 2.5 游戏秒（有效性被放大 4 倍），切后台回来直接整批过期。修复：改为 `lifeRemaining` 游戏秒字段，由 `dtFrame` 递减；`render` 同步读取该字段，移除 `expiresAt/placedAt`。
+- **M2 分数双数据源**：删除浮点影子字段 `state.score`，总分唯一口径为 `integerScore()`（四类明细各自取整后代数和）；`damagePlanet` 的失守惩罚改为只累计「实际扣除量」。
+- **M3 预测链路 O(N²·P)**：`simulateFuture` 额外产出每条路径的包围盒（一次 O(N·P)），`evaluateRisk` 先用「包围盒不相交 → 整条跳过」剪枝，再对少量候选做逐段圆检测；判色/截断结果与剪枝前完全一致（等价性已由测试锁定）。
+- **M4 无自动化质量门**：新增 `test/run-all.js`（语法检查 + 全部套件，失败即非零退出）、`package.json`（零依赖，`npm test`）、`.github/workflows/test.yml`（push/PR 自动执行）、`.editorconfig`。未引入 ESLint 以保持零依赖，语法门由 `node --check` 覆盖。
+- **M5 预测性能红线常量分叉**：`if (N > 50)` 分支的硬编码 5s 改为以 `PREDICT_DUR` 为基准递减（`PREDICT_DUR - (N-50)*0.1`）。
+- **M6 玩家星体撞母星自伤**：母星只受来袭威胁伤害（与 README 一致）；玩家星体撞母星改为 `absorbByPlanet()`——吸收该星体并给出轻量反馈，不扣血、不计失守惩罚。
+- **M7 存储异常静默**：新增 `pendingWarning` + `game.takeWarning()`；写入失败（配额/隐私模式）提示「战绩保存失败…」；提示在菜单的「本机成就」下方渲染（菜单层遮罩高于 `.message`）。布防存档相关的损坏提示随该功能一并删除（见下）。
+- **M8 粒子无上限**：新增 `MAX_PARTICLES = 800`，`spawnExplosion` 超出时优先淘汰最旧粒子。
+
+### 功能删除：移除「沿用上次布防」
+- **依据**：该功能只做「手动复制上一局布局」——不做任何系统预设。评估发现它的使用时机与入口错位（最需要的「再来一局」`keepSetup:false` 明确禁用它，必须"返回菜单→手动切换"才生效），且保存的是"结算瞬间残局"（黑洞因锚定从不保存）、单槽会被生存/闯关互相覆盖、闯关星能收紧时还会静默只恢复一部分。综合判定价值低、认知成本高，决定整体删除。
+- **代码删除**：`applySavedSetup` / `saveSetup` / `tierByMass`（唯一调用点在此）、`LS_KEYS` 中的 `starshield_setup`、`endGame` 中的保存调用、`startGame` 的 `keepSetup` 分支；`js/input.js` 的 `keepSetup` 状态与 `refreshSetupOptions` / `bindSetupOptions`；`index.html` 的「开局方式」菜单分区；`test/setup.test.js` 整套测试。
+- **样式迁移**：`.setup-hint` 改名为 `.menu-warn`（该 class 被 M7 的存储异常提示复用，不能直接删除）；连带删除仅服务于该分区的死样式 `.opt-row`。
+- **净减约 205 行 / 9 个文件**；开局固定只有母星。
+- 新增回归测试：残留旧版布防数据不会被恢复、传入 `keepSetup` 无副作用、该存储键不再由游戏管理。
+
+### 测试与文档
+- 新增 `test/robustness.test.js`（覆盖 H1-H4 / M1-M8 共 60+ 断言：正常流程 + 边界，含主循环异常自愈/停止阈值、星体上限与星能边界、波次超时与末波通关、指针归属与失焦取消、黑洞游戏时钟、总分单口径、AABB 剪枝等价性、预测时长红线、母星受击规则、存档异常、粒子上限）。
+- 修正受 M2 影响的 `test/score.test.js`（改用 `getCurrentRunStats().score` 读取总分）与 `test/result-ui.test.js`（移除影子字段赋值）。
+- 测试桩补全 canvas 上下文（`createRadialGradient` 返回带 `addColorStop` 的对象），使「场上有星体时的渲染路径」首次被真正覆盖。
+- 全部 **12 套测试通过**、21 个 JS 文件语法检查通过、失败 0。
+- README 同步：星体数量上限、波次超时、黑洞 10 秒为游戏时间、玩家星体不自伤、`npm test` 入口。
+
 ## [v1.5] 2026-09-05
 
 ### 物理 / 性能

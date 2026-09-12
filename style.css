@@ -376,7 +376,6 @@ html, body {
 .lc-desc { font-size: 11px; color: #93a7cf; line-height: 1.4; margin-bottom: 4px; }
 .lc-meta { font-size: 10px; color: #8fb6ff; font-variant-numeric: tabular-nums; }
 
-.opt-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .opt-btn {
   padding: 9px 14px;
   border: 1px solid rgba(120,160,255,0.3);
@@ -392,7 +391,8 @@ html, body {
 .opt-btn.primary { background: rgba(60,110,200,0.4); border-color: #6f9bff; }
 .opt-btn.danger { background: rgba(40,20,25,0.55); color: #ff8a7a; border-color: rgba(255,110,90,0.35); }
 .opt-btn.danger:hover { background: rgba(60,25,30,0.75); border-color: rgba(255,110,90,0.6); }
-.setup-hint { font-size: 12px; color: #6f86b3; margin-top: 8px; min-height: 16px; }
+/* 菜单内的提示/警告文本（如存档异常） */
+.menu-warn { font-size: 12px; color: #ffb27a; margin-top: 8px; }
 
 .menu-cta { margin-top: 6px; text-align: center; }
 .start-btn {

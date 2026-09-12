@@ -56,7 +56,8 @@
     const dt = (opts.dt != null) ? opts.dt : physics.PREDICT_DT;
     let duration = (opts.duration != null) ? opts.duration : physics.PREDICT_DUR;
     const N = bodies.length;
-    if (N > 50) duration = Math.max(2, 5 - (N - 50) / 10);   // 性能红线
+    // 性能红线：天体较多时按 PREDICT_DUR 为基准缩短预测时长（不再硬编码 5s，M5）
+    if (N > 50) duration = Math.max(2, physics.PREDICT_DUR - (N - 50) * 0.1);
 
     // 降采样：每 sampleEvery 步记录一个轨迹点，兼顾"细步长高保真"与"绘制不过密"。
     const sampleEvery = (opts.sampleEvery != null) ? opts.sampleEvery : 2;
@@ -80,8 +81,24 @@
       }
       for (let i = 0; i < clones.length; i++) prevDead[i] = clones[i].dead;
     }
+    // 每条路径的包围盒（M3 空间剪枝用）：整条轨迹的 AABB，一次 O(N·P) 计算，
+    // 供 evaluateRisk 先用"包围盒不相交 → 整条跳过"排除绝大多数天体对，
+    // 把逐段圆检测从 O(N²·P) 降到"少量候选 + 精确检测"。
+    const aabbs = new Array(clones.length);
+    for (let i = 0; i < clones.length; i++) {
+      const p = paths[i];
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let k = 0; k < p.length; k++) {
+        const q = p[k];
+        if (q.x < minX) minX = q.x;
+        if (q.x > maxX) maxX = q.x;
+        if (q.y < minY) minY = q.y;
+        if (q.y > maxY) maxY = q.y;
+      }
+      aabbs[i] = { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+    }
     // 返回：全部天体路径 paths、原始 bodies（供按索引发掘碰撞特征）、相邻点真实时间间隔 sampleDt
-    return { paths: paths, bodies: bodies, sampleDt: sampleEvery * dt };
+    return { paths: paths, bodies: bodies, sampleDt: sampleEvery * dt, aabbs: aabbs };
   }
 
   /* ============ 风险评估：三色 + 轨迹截断 ============ */
@@ -104,16 +121,35 @@
     const ownerR = (owner && owner.radius) ? owner.radius : 0;
     let collideIdx = -1, entry = null, level = 'blue', captured = false, hitMother = false;
 
+    // 空间剪枝（M3）：先用整条路径的包围盒排除不可能相交的天体。
+    // 判定依据：若两者轨迹存在任意一次碰撞，则对方轨迹上必存在一点落入
+    // 「本天体轨迹包围盒外扩 rr」之内 → 包围盒不相交即可安全跳过（无漏判）。
+    const aabbs = sim.aabbs;
+    const ownerBox = aabbs ? aabbs[ownerIndex] : null;
+    const candidates = [];
+    for (let k = 0; k < bodies.length; k++) {
+      if (k === ownerIndex) continue;
+      const o = bodies[k];
+      if (!paths[k]) continue;
+      if (o.immovable && owner && owner.immovable) continue;  // 两不可动天体互不作用
+      if (ownerBox && aabbs[k]) {
+        const ob = aabbs[k];
+        const rr = o.radius + ownerR;
+        if (ob.maxX + rr < ownerBox.minX || ob.minX - rr > ownerBox.maxX ||
+            ob.maxY + rr < ownerBox.minY || ob.minY - rr > ownerBox.maxY) continue;
+      }
+      candidates.push(k);
+    }
+
     // 沿路径逐段找最早碰撞（最先发生者决定颜色与截断点）
     // 第 i 段（path[i]→path[i+1]）对应其它天体第 i 个采样点 paths[k][i]，时刻一致
     for (let i = 0; i < ownerPath.length - 1; i++) {
       const p0 = ownerPath[i], p1 = ownerPath[i + 1];
-      for (let k = 0; k < bodies.length; k++) {
-        if (k === ownerIndex) continue;
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const k = candidates[ci];
         const o = bodies[k];
         const op = paths[k];
         if (!op || i >= op.length) continue;     // 该天体此刻已提前死亡/无坐标，跳过
-        if (o.immovable && owner && owner.immovable) continue;  // 两不可动天体互不作用
         const rr = o.radius + ownerR;            // 真实碰撞阈值（两球表面接触）
         const pt = segCircleEntry(p0.x, p0.y, p1.x, p1.y, op[i].x, op[i].y, rr);
         if (!pt) continue;

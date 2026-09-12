@@ -78,12 +78,10 @@ game.stepFrame();
 assert('连续通关到第 2 关', game.getCampaignUnlocked() === 2, 'unlocked=' + game.getCampaignUnlocked());
 
 // 7. 一键清除进度：清空全部 localStorage 键 + 回第 1 关
-sandbox.localStorage.setItem('starshield_setup', JSON.stringify([{ x: 1, y: 2, type: 'star', mass: 150, radius: 16 }]));
 sandbox.localStorage.setItem('starshield_best_score', '999');
 sandbox.localStorage.setItem('starshield_audio', 'off');
 game.clearAllProgress();
 assert('清除后解锁进度归零', game.getCampaignUnlocked() === 0);
-assert('清除后布防存档被删除', sandbox.localStorage.getItem('starshield_setup') === null);
 assert('清除后最佳战绩被删除', sandbox.localStorage.getItem('starshield_best_score') === null);
 assert('清除后音频设置被删除', sandbox.localStorage.getItem('starshield_audio') === null);
 assert('清除后第 2 关重新锁定', !game.isLevelUnlocked(1));

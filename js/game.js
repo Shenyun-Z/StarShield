@@ -7,6 +7,15 @@
   const MAX_FRAME_DT = 0.25;      // 单帧真实时间上限(s)（切后台回来时防止一次补太多）
   let stepAccumulator = 0;        // 未消耗的真实时间（秒）
   const BASE_HEALTH = 20;
+  // 场上玩家星体上限：物理 stepSystem 与预测模拟都是 O(N²)，星能无限时无上限会直接卡死页面
+  const MAX_PLACED_BODIES = 60;
+  // 单波超时（游戏秒）：队列吐空后仍无法清场（威胁被引力拘禁在稳定轨道）时强制收编，避免软锁
+  const WAVE_TIMEOUT = 40;
+  // 玩家黑洞：存活时长与消失前收缩动画时长（均为游戏时钟秒，见 M1）
+  const BLACKHOLE_LIFE = 10;
+  const BLACKHOLE_FADE = 1.5;
+  // 粒子总量上限（超出时淘汰最旧粒子，避免同帧大量爆炸造成内存/绘制尖峰）
+  const MAX_PARTICLES = 800;
   // 母星与玩家星体之间最小距离（半径 + 缓冲）。
   // 必须与 input.js 的 isInsidePlanet 使用同一个值，避免判定不一致。
   const PLANET_FORBIDDEN_PAD = 34;     // px
@@ -64,7 +73,8 @@
     shake: 0,
     health: BASE_HEALTH,
     budget: 0,
-    score: 0,
+    // 注意：不再保存总分字段。总分一律由 integerScore() 从四类明细派生，
+    // 避免「浮点累加值」与「明细代数和」两套真值漂移（见 M2）。
     wave: 0,
     mode: 'survival',
     level: null,
@@ -84,6 +94,7 @@
     waveActive: false,
     waveQueue: [],
     waveTimer: 0,
+    waveElapsed: 0,     // 当前波已进行的游戏时长(s)，用于超时保护
     healthFlash: 0,
     // 碰撞动画
     shockwaves: [],         // { x, y, radius, maxRadius, life, maxLife, color }
@@ -109,8 +120,20 @@
   // ===== 本地战绩 / 进度 =====
   const LS_KEYS = [
     'starshield_best_score', 'starshield_best_waves',
-    'starshield_setup', 'starshield_campaign_unlocked', 'starshield_audio',
+    'starshield_campaign_unlocked', 'starshield_audio',
   ];
+  // 存档异常反馈（M7）：localStorage 损坏/配额超限不再静默吞掉，
+  // 记录一条待展示的提示，由 input.js 在回到菜单时用轻提示呈现给玩家。
+  let pendingWarning = '';
+  function setWarning(msg) {
+    if (!pendingWarning) pendingWarning = msg;
+    console.warn('StarShield: ' + msg);
+  }
+  function takeWarning() {
+    const w = pendingWarning;
+    pendingWarning = '';
+    return w;
+  }
   function loadBest() {
     try {
       bestScore = Math.max(0, parseInt(localStorage.getItem('starshield_best_score') || '0', 10) || 0);
@@ -125,7 +148,9 @@
       localStorage.setItem('starshield_best_score', String(bestScore));
       localStorage.setItem('starshield_best_waves', String(bestWaves));
       localStorage.setItem('starshield_campaign_unlocked', String(campaignUnlocked));
-    } catch (e) {}
+    } catch (e) {
+      setWarning('战绩保存失败：本地存储不可用或已满');
+    }
   }
   // 一键清除进度：删除本游戏写入的全部 localStorage 键（各层级通用）
   function clearAllProgress() {
@@ -137,12 +162,14 @@
   }
   // 整数化总分：由四类计分明细（各自取整）代数求和推导，保证与结算面板明细严格一致、
   // 始终为整数（消除生存存活分浮点累加导致的显示漂移）。
+  // 这是全游戏唯一的总分口径——不再维护一个浮点的 state.score 影子字段（M2）。
   function integerScore() {
+    const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
     return Math.max(0,
-      Math.round(state.scoreIntercept)
-      + Math.round(state.scoreWaveBonus)
-      + Math.round(state.scoreSurvive)
-      - Math.round(state.scorePenalty));
+      n(state.scoreIntercept)
+      + n(state.scoreWaveBonus)
+      + n(state.scoreSurvive)
+      - n(state.scorePenalty));
   }
   function updateBest() {
     if (state.mode === 'campaign') {
@@ -183,8 +210,8 @@
     state.bodies = [];
     state.particles = [];
     state.shake = 0;
-    state.score = 0;
     state.wave = 0;
+    state.waveElapsed = 0;
     state.endReason = null;
     state.comets = 0;
     state.asteroids = 0;
@@ -230,71 +257,6 @@
     // 黑洞仅由玩家在游戏中放置，且放置后固定位置、10 秒后自动消失。
   }
 
-  // 存档是用户可篡改的本地数据：必须白名单化质量/半径/花费，并校验坐标，
-  // 否则被写入的 NaN / 超大质量会污染物理系统（NaN 会通过引力扩散到全场）。
-  const MAX_SAVED_BODIES = 40;
-  function tierByMass(mass) {
-    let best = STAR_TYPES.mid, bestDiff = Infinity;
-    for (const k in STAR_TYPES) {
-      if (!Object.prototype.hasOwnProperty.call(STAR_TYPES, k)) continue;
-      const d = Math.abs(STAR_TYPES[k].mass - mass);
-      if (d < bestDiff) { bestDiff = d; best = STAR_TYPES[k]; }
-    }
-    return best;
-  }
-
-  function applySavedSetup() {
-    try {
-      const raw = localStorage.getItem('starshield_setup');
-      if (!raw) return false;
-      const saved = JSON.parse(raw);
-      if (!Array.isArray(saved) || saved.length === 0) return false;
-      const now = performance.now();
-      const W = window.innerWidth, H = window.innerHeight;
-      let applied = 0;
-      for (const s of saved) {
-        if (applied >= MAX_SAVED_BODIES) break;
-        if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) continue;
-        if (s.x < 0 || s.y < 0 || s.x > W || s.y > H) continue;   // 视口外（换过窗口尺寸）丢弃
-        const isBH = s.type === 'blackhole';
-        const def = isBH ? STAR_TYPES.blackhole : tierByMass(s.mass);
-        const p = { x: s.x, y: s.y };
-        if (!canPlaceAt(p)) continue;                             // 母星禁放区内丢弃
-        if (state.budget < def.cost) continue;                    // 星能不足则跳过（不再产生负星能）
-        const body = {
-          type: isBH ? 'blackhole' : 'star',
-          mass: def.mass, radius: def.radius,
-          x: p.x, y: p.y, vx: 0, vy: 0,
-          isCollectable: true, placedType: isBH ? 'blackhole' : (s.type || 'star'),
-          placedAt: now,
-        };
-        if (isBH) {
-          // 沿用的玩家黑洞：锚定 + 10秒后消失（重新计时）
-          body.anchored = true;
-          body.immovable = true;
-          body.expiresAt = now + 10000;
-          body.fading = false;
-        }
-        state.bodies.push(body);
-        state.budget -= def.cost;
-        state.totalSpent += def.cost;
-        state.starsPlaced++;
-        applied++;
-      }
-      state.budget = Math.max(0, state.budget);
-      return applied > 0;
-    } catch (e) { return false; }
-  }
-  function saveSetup() {
-    try {
-      const stars = state.bodies
-        .filter(b => b.type === 'star' || b.type === 'blackhole')
-        .filter(b => !b.anchored)              // 只保存玩家放置的
-        .map(b => ({ x: b.x, y: b.y, type: b.type, mass: b.mass, radius: b.radius }));
-      localStorage.setItem('starshield_setup', JSON.stringify(stars));
-    } catch (e) {}
-  }
-
   // ===== 母星禁放区 =====
   // 唯一权威实现：input.js 也调用此函数
   function canPlaceAt(p) {
@@ -312,8 +274,22 @@
     blackhole: { name: '黑洞', mass: 1500, radius: 11, cost: 1500 },
   };
 
+  // 场上玩家星体数量（含黑洞），用于上限判定
+  function countPlacedBodies() {
+    let n = 0;
+    for (let i = 0; i < state.bodies.length; i++) {
+      const t = state.bodies[i].type;
+      if (t === 'star' || t === 'blackhole') n++;
+    }
+    return n;
+  }
+
   function placeStar(typeKey, p, opts) {
     const def = STAR_TYPES[typeKey] || STAR_TYPES.mid;
+    // 数量上限优先于星能判断：物理与预测均为 O(N²)，无上限会随放置数增长而卡死页面
+    if (countPlacedBodies() >= MAX_PLACED_BODIES) {
+      return { ok: false, reason: '场上星体已达上限 ' + MAX_PLACED_BODIES };
+    }
     if (state.budget < def.cost) return { ok: false, reason: '星能不足' };
     if (!canPlaceAt(p)) return { ok: false, reason: '离母星太近' };
     state.budget -= def.cost;
@@ -322,15 +298,14 @@
     const vx = (opts && Number.isFinite(opts.vx)) ? opts.vx : 0;
     const vy = (opts && Number.isFinite(opts.vy)) ? opts.vy : 0;
     if (isBH) {
-      // 玩家黑洞：固定位置（不随引力移动），10秒后自动消失
+      // 玩家黑洞：固定位置（不随引力移动），BLACKHOLE_LIFE 游戏秒后自动消失
       state.bodies.push({
         type: 'blackhole', mass: def.mass, radius: def.radius,
         x: p.x, y: p.y, vx: 0, vy: 0,
         anchored: true,                                  // 锚定，不被引力推动
         immovable: true,                                 // 物理上不动；撞来的被吞
         isCollectable: true, placedType: typeKey,
-        placedAt: performance.now(),
-        expiresAt: performance.now() + 10000,            // 10s 后消失
+        lifeRemaining: BLACKHOLE_LIFE,                   // 剩余存活（游戏秒，见 M1）
         fading: false,                                   // 即将消失动画中
       });
     } else {
@@ -403,7 +378,8 @@
     state.waveInterval = interval;
     state.waveActive = true;
     state.spawnAccumulator = 0;
-    // 记录是否最后一波（极端模式通关判定用）
+    state.waveElapsed = 0;                 // 波次超时计时（H3）
+    // 记录是否最后一波（闯关模式通关判定用）
     state.isLastWave = !!g.isLast;
   }
 
@@ -489,9 +465,9 @@
     state.waveActive = false;
     state.waveQueue = [];
     state.spawnAccumulator = 0;
+    state.waveElapsed = 0;
     // 波次清空奖励：基础 15 + 每波 5 分
     const wb = 15 + 5 * state.wave;
-    state.score += wb;
     state.lastWaveBonus = wb;
     state.scoreWaveBonus += wb;
   }
@@ -527,7 +503,6 @@
     // 模式/关卡加权：闯关模式越靠后关卡倍率越高（生存模式恒为 1）
     const modeMul = state.mode === 'campaign' ? (1 + state.levelIndex * 0.15) : 1;
     const gain = Math.max(1, Math.round(base * diffMul * modeMul));
-    state.score += gain;
     state.scoreIntercept += gain;
     state.asteroidsCleared += 1;
     // 闯关模式资源回收：每清除一个威胁返还少量星能（替代旧 rewards 硬编码）
@@ -537,15 +512,16 @@
     return gain;
   }
 
-  // 撞击母星
+  // 母星受到来袭威胁撞击（仅 asteroid/comet 会走到这里，见 M6 的调用点判定）
   function damagePlanet(byBody) {
     state.health -= 1;
     state.hitCount += 1;
-    // 失守惩罚：母星被击中扣 8 分（得分不低于 0）
-    // 只累计「实际扣除量」，保证结算面板的惩罚明细与真实扣分一致
-    const scoreBefore = state.score;
-    state.score = Math.max(0, state.score - 8);
-    state.scorePenalty += (scoreBefore - state.score);
+    // 失守惩罚：母星被击中扣 8 分（总分不低于 0）。
+    // 总分由明细派生，故先记满额惩罚、再回退「未真正扣掉」的部分，保证
+    // 结算面板的惩罚明细与实际扣分严格一致（M2）。
+    const before = integerScore();
+    state.scorePenalty += 8;
+    state.scorePenalty -= (8 - (before - integerScore()));
     state.healthFlash = 1;
     state.shake = 14;
     state.planetPunch = 1;                       // 母星震缩
@@ -566,6 +542,38 @@
       state.health = 0;
       endGame();
     }
+  }
+
+  // 玩家星体被母星吸收（M6）：母星只被来袭威胁伤害，玩家自己的星体撞上来
+  // 只损失该星体、不扣母星血量——避免误投或被自身引力拽回造成"自伤"，
+  // 与 README「陨石撞母星扣 1 点血」的规则一致。
+  function absorbByPlanet(body) {
+    const planet = state.bodies[0];
+    if (planet) {
+      spawnShockwave(planet.x, planet.y, planet.radius + 70,
+                     'rgba(150,205,255,0.65)', 0.35);
+    }
+    if (body) {
+      spawnExplosion(body.x, body.y, '#9ad0ff', 8);
+    }
+    audio.play('flee');
+  }
+
+  // 波次超时强制收编（H3）：被引力拘禁在稳定轨道、既不出界也不撞母星的威胁
+  // 会让波次永远无法结算（闯关模式直接软锁）。这里按"已被引力收编"统一结算清除。
+  function sweepRemainingThreats() {
+    let swept = 0;
+    for (let i = state.bodies.length - 1; i >= 0; i--) {
+      const b = state.bodies[i];
+      if (b.type !== 'asteroid' && b.type !== 'comet') continue;
+      registerClear(b, 'timeout');
+      spawnShockwave(b.x, b.y, b.radius + 70, 'rgba(120,190,255,0.55)', 0.35);
+      state.bodies.splice(i, 1);
+      swept++;
+    }
+    if (swept > 0) addFlash('rgba(120,170,255,0.18)', 0.6);
+    state.waveElapsed = 0;
+    return swept;
   }
 
   // 黑洞吞任何天体（陨石/彗星/玩家星体）
@@ -598,8 +606,6 @@
     updateBest();
     // 音效：通关/时间到 → 庆祝；母星陨落/防线失守 → gameover
     audio.play(state.endReason === 'win' ? 'place' : (state.endReason === 'timeup' ? 'place' : 'gameover'));
-    // 立刻保存布防供下次「沿用上次布防」
-    saveSetup();
     // 结算时：隐藏星体栏 + 控制条（避免误触），HUD 保留背景观感
     ['starBar', 'controls'].forEach(id => {
       const el = document.getElementById(id);
@@ -613,7 +619,11 @@
 
   // ===== 粒子 =====
   function spawnExplosion(x, y, color, n) {
-    for (let i = 0; i < n; i++) {
+    const count = Math.max(0, n | 0);
+    // 粒子上限（M8）：同帧大量爆炸/吞噬时淘汰最旧粒子，避免内存与绘制尖峰
+    const overflow = state.particles.length + count - MAX_PARTICLES;
+    if (overflow > 0) state.particles.splice(0, overflow);
+    for (let i = 0; i < count; i++) {
       const a = rand(0, Math.PI * 2);
       const sp = rand(40, 220);
       state.particles.push({
@@ -679,8 +689,9 @@
       const dx = b.x - planet.x, dy = b.y - planet.y;
       const dist = Math.hypot(dx, dy);
       if (dist < planet.radius + b.radius) {
-        // 撞上母星（含玩家星体被自身引力拽回）：扣血并移除
-        damagePlanet(b);
+        // 撞上母星：仅来袭威胁扣血，玩家星体被吸收但不造成伤害（M6）
+        if (b.type === 'asteroid' || b.type === 'comet') damagePlanet(b);
+        else absorbByPlanet(b);
         state.bodies.splice(i, 1);
         continue;
       }
@@ -691,6 +702,15 @@
         // 玩家星体飞出边界不得分，否则可反复投掷小行星出界刷分。
         if (b.type === 'asteroid' || b.type === 'comet') registerClear(b, 'flee');
         state.bodies.splice(i, 1);
+      }
+    }
+
+    // 波次超时保护（H3）：队列已吐空、但场上仍有威胁长时间无法清场
+    // （被引力拘禁在稳定轨道，既不出界也不撞母星）→ 强制收编，避免永久软锁。
+    if (state.waveActive) {
+      state.waveElapsed += dtFrame;
+      if (state.waveQueue.length === 0 && state.waveElapsed >= WAVE_TIMEOUT) {
+        sweepRemainingThreats();
       }
     }
 
@@ -736,8 +756,10 @@
       if (!b.dead) continue;
       // 补动画：
       if (b.hitStar) {
-        // 撞上母星 → 扣血 + 红色受击动画 + 碎片（physics 先标记了 dead，这里补发）
-        damagePlanet(b);
+        // 撞上母星（physics 先标记了 dead，这里补发表现与结算）：
+        // 仅来袭威胁扣血，玩家星体被吸收（M6）
+        if (b.type === 'asteroid' || b.type === 'comet') damagePlanet(b);
+        else absorbByPlanet(b);
       } else if (b.exploded && !b.captured) {
         // 玩家星体互撞 → 蓝色火花。一次碰撞涉及两个天体，
         // 只触发一次（physics 通过 explodedWith 记录了对手）
@@ -786,23 +808,25 @@
       if (state.flashes[i].life <= 0) state.flashes.splice(i, 1);
     }
 
-    // 玩家黑洞过期检测 + 消失动画
-    const tnow = performance.now();
+    // 玩家黑洞生命周期 + 消失动画（M1：统一用游戏时钟 dtFrame，而非墙钟 performance.now()）
+    // 用游戏时钟后：慢动作下寿命按游戏时间消耗（不再被放大 4 倍），
+    // 切后台时主循环暂停 → 寿命也暂停，不会回到页面就整批过期。
     for (let i = state.bodies.length - 1; i >= 0; i--) {
       const b = state.bodies[i];
       if (b.type !== 'blackhole') continue;
-      if (!b.anchored || !b.expiresAt) continue;     // 仅玩家黑洞
-      // 提前 1.5s 标记 fading，进入收缩动画
-      if (!b.fading && tnow >= b.expiresAt - 1500) {
+      if (!b.anchored || !Number.isFinite(b.lifeRemaining)) continue;   // 仅玩家黑洞
+      b.lifeRemaining = Math.max(0, b.lifeRemaining - dtFrame);
+      // 剩余 BLACKHOLE_FADE 时进入收缩动画
+      if (!b.fading && b.lifeRemaining <= BLACKHOLE_FADE) {
         b.fading = true;
-        b.fadeLife = 1.5;
+        b.fadeLife = BLACKHOLE_FADE;
       }
       // fading 阶段递减 fadeLife
       if (b.fading) {
         b.fadeLife = Math.max(0, b.fadeLife - dtFrame);
       }
       // 到期 → 触发消失动画 + 移除
-      if (tnow >= b.expiresAt) {
+      if (b.lifeRemaining <= 0) {
         // 紫色冲击波 + 粒子
         spawnShockwave(b.x, b.y, b.radius + 160,
                        'rgba(200,155,255,0.85)', 0.50);
@@ -820,7 +844,6 @@
 
     if (state.mode === 'survival' && !state.gameOver) {
       const sv = dtFrame * 2;
-      state.score += sv;
       state.scoreSurvive += sv;
       // 限时倒计时
       if (state.duration > 0) {
@@ -920,15 +943,8 @@
     if (!levels[state.levelIndex]) return false;
     state.level = levels[state.levelIndex];
     state.gameStarted = true;
+    // 每局都从零开始：场上只有母星，所有星体由玩家自行摆放（不存在预设布防）
     setupLevel();
-    // 按用户选择的开局方式处理「沿用上次布防」：
-    // - keepSetup 为 true：尝试应用上次结算时保存的布防
-    // - keepSetup 为 false / 未提供：从空场开始（仅母星），不读取存档
-    if (o.keepSetup) {
-      applySavedSetup();
-    }
-    // 注意：开局不再调用 saveSetup（避免把空场覆盖真实存档）；
-    // 布防存档在 endGame 时由 saveSetup() 记录。
 
     // 同步菜单高亮（用户用「再来一局」/「重新开始」时 input 内的选择状态需对齐）
     if (typeof window.__syncMenuSelection === 'function') {
@@ -959,6 +975,11 @@
       banner.classList.add('show');
       clearTimeout(banner._t);
       banner._t = setTimeout(() => banner.classList.remove('show'), 3600);
+    }
+
+    // 若主循环曾因连续异常被停止，开新局时恢复（否则画面会一直不动）
+    if (typeof window.__resumeLoop === 'function') {
+      window.__resumeLoop();
     }
   }
 
@@ -1040,6 +1061,7 @@
     getLevelsForMode,
     isLevelUnlocked,
     getCampaignUnlocked: function () { return campaignUnlocked; },
+    takeWarning,
     STAR_TYPES,
     SURVIVAL_LEVELS,
     CAMPAIGN_LEVELS,

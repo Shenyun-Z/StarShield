@@ -31,6 +31,8 @@ sandbox.predictor = sandbox.window.predictor;
 sandbox.predictorRenderer = sandbox.window.predictorRenderer;
 sandbox.render = sandbox.window.render;
 const game = sandbox.window.game;
+// M2：总分不再有 state.score 影子字段，统一走「明细派生」的唯一口径
+const total = () => game.getCurrentRunStats().score;
 
 let ok = true;
 function assert(name, cond, extra) { if (!cond) { console.error('FAIL: ' + name + (extra ? ' (' + extra + ')' : '')); ok = false; } else console.log('PASS: ' + name); }
@@ -42,20 +44,20 @@ function testSurvivalClear() {
   st.bodies = st.bodies.filter(b => b.type === 'planet');
   st.difficulty = 0.3;  // 基准难度
   const planet = st.bodies[0];
-  const before = st.score;
+  const before = total();
   st.bodies.push({ type: 'asteroid', mass: 50, radius: 13, x: planet.x + 9999, y: planet.y, vx: 0, vy: 0 });
   game.stepFrame();
-  const gain = st.score - before;
+  const gain = total() - before;
   // base = 6 + round(50/8)=6+6=12; diffMul=1; modeMul=1 => 12
   assert('生存模式出界陨石得分≈12', Math.abs(gain - 12) < 0.2, 'gain=' + gain);
   assert('拦截计数+1', st.asteroidsCleared === 1);
 
   // 难度升高应更高分
-  const before2 = st.score;
+  const before2 = total();
   st.difficulty = 1.0;
   st.bodies.push({ type: 'asteroid', mass: 50, radius: 13, x: planet.x + 9999, y: planet.y, vx: 0, vy: 0 });
   game.stepFrame();
-  const gain2 = st.score - before2;
+  const gain2 = total() - before2;
   // diffMul = 1 + (1.0-0.3)*1.4 = 1.98; 12*1.98=23.76 -> round 24
   assert('高难度出界陨石得分更高(≈24)', Math.abs(gain2 - 24) < 0.2, 'gain2=' + gain2);
   return true;
@@ -67,10 +69,10 @@ function testCometClear() {
   st.bodies = st.bodies.filter(b => b.type === 'planet');
   st.difficulty = 0.3;
   const planet = st.bodies[0];
-  const before = st.score;
+  const before = total();
   st.bodies.push({ type: 'comet', mass: 30, radius: 10, x: planet.x + 9999, y: planet.y, vx: 0, vy: 0 });
   game.stepFrame();
-  const gain = st.score - before;
+  const gain = total() - before;
   assert('彗星出界得分≈12（高于陨石）', Math.abs(gain - 12) < 0.2, 'gain=' + gain);
   return true;
 }
@@ -79,12 +81,12 @@ function testWaveBonus() {
   game.startGame({ mode: 'survival', levelIndex: 0 });
   const st = game.state;
   st.wave = 3;
-  const before = st.score;
+  const before = total();
   // 调用 clearWave 通过私有不可直接访问，改为触发：清空所有陨石并 waveActive
   st.waveActive = true; st.waveQueue = [];
   st.bodies = st.bodies.filter(b => b.type === 'planet');
   game.stepFrame();  // 剩余威胁为 0 -> clearWave
-  const gain = st.score - before;
+  const gain = total() - before;
   assert('波次清空奖励≈15+5*3=30', Math.abs(gain - 30) < 0.2, 'gain=' + gain);
   return true;
 }
@@ -95,16 +97,18 @@ function testHitPenalty() {
   st.bodies = st.bodies.filter(b => b.type === 'planet');
   st.difficulty = 0.3;
   const planet = st.bodies[0];
-  // 先得一些分
-  st.score = 100;
+  // 先得一些分（M2：直接写明细字段，总分由其派生）
+  st.scoreIntercept = 100;
   st.bodies.push({ type: 'asteroid', mass: 50, radius: 13, x: planet.x + 5, y: planet.y, vx: 0, vy: 0 });
   game.stepFrame();
-  assert('撞击母星扣 8 分', Math.abs(st.score - 92) < 0.5, 'score=' + st.score);
-  // 分数很低时不低于 0
-  st.score = 5;
+  assert('撞击母星扣 8 分', Math.abs(total() - 92) < 0.5, 'score=' + total());
+  // 分数很低时不低于 0，且惩罚明细只累计「实际扣除量」
+  st.scorePenalty = 0;
+  st.scoreIntercept = 5;
   st.bodies.push({ type: 'asteroid', mass: 50, radius: 13, x: planet.x + 5, y: planet.y, vx: 0, vy: 0 });
   game.stepFrame();
-  assert('低分时失守不出现负分', st.score >= 0 && st.score < 5, 'score=' + st.score);
+  assert('低分时失守不出现负分', total() >= 0 && total() < 5, 'score=' + total());
+  assert('低分时惩罚明细 = 实际扣除量(5)', st.scorePenalty === 5, 'penalty=' + st.scorePenalty);
   return true;
 }
 // 5. 闯关模式：清掉天体返还星能（旧 rewards 紊乱已移除）
@@ -124,10 +128,10 @@ function testExtremeRecycle() {
   st2.bodies = st2.bodies.filter(b => b.type === 'planet');
   st2.difficulty = 0.3;
   const planet2 = st2.bodies[0];
-  const b0 = st2.score;
+  const b0 = total();
   st2.bodies.push({ type: 'asteroid', mass: 50, radius: 13, x: planet2.x + 9999, y: planet2.y, vx: 0, vy: 0 });
   game.stepFrame();
-  const g = st2.score - b0; // modeMul = 1+3*0.15=1.45 => 12*1.45=17.4 -> 17
+  const g = total() - b0; // modeMul = 1+3*0.15=1.45 => 12*1.45=17.4 -> 17
   assert('闯关模式第4关(modeIdx3)得分更高(=17)', g === 17, 'g=' + g);
   return true;
 }
