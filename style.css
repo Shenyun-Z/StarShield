@@ -538,6 +538,64 @@ html, body {
 }
 .bp-name { font-size: 12px; color: #8fb6ff; letter-spacing: .5px; }
 
+/* ---------- 章节分组（P2） ---------- */
+.chapter-head {
+  grid-column: 1 / -1;
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 10px 0 2px; padding: 6px 10px 6px 14px;
+  border-left: 3px solid #ffe28a;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255,226,138,0.10), rgba(20,30,55,0));
+}
+.chapter-head .ch-title { font-size: 13px; font-weight: 700; color: #ffe28a; letter-spacing: .5px; }
+.chapter-head .ch-sub { font-size: 11px; color: #93a7cf; }
+.chapter-head .ch-stars { margin-left: auto; font-size: 11px; color: #ffd98a; font-variant-numeric: tabular-nums; }
+
+/* ---------- Boss 血条 / 道具槽（P2） ---------- */
+.boss-bar {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: 64px; display: flex; align-items: center; gap: 10px;
+  padding: 6px 14px; border-radius: 12px;
+  background: rgba(30,10,45,0.82);
+  border: 1px solid rgba(200,155,255,0.45);
+  box-shadow: 0 0 18px rgba(160,90,230,0.25);
+  z-index: 6;
+}
+.bb-label { font-size: 11px; letter-spacing: 2px; color: #d9a6ff; font-weight: 700; }
+.bb-segs { display: flex; gap: 4px; }
+.bb-seg {
+  width: 18px; height: 10px; border-radius: 3px;
+  background: rgba(90,50,130,0.6);
+  border: 1px solid rgba(200,155,255,0.35);
+}
+.bb-seg.on {
+  background: linear-gradient(180deg, #f0c8ff, #a25ce0);
+  box-shadow: 0 0 8px rgba(200,155,255,0.6);
+}
+.prop-bar {
+  position: absolute; bottom: 108px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; z-index: 5;
+}
+.prop-opt {
+  pointer-events: auto;
+  position: relative;
+  padding: 8px 14px; border-radius: 10px;
+  border: 1px solid rgba(140,240,255,0.35);
+  background: rgba(16,32,48,0.8);
+  color: #cfe3ff; font-size: 13px; cursor: pointer;
+  transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.prop-opt small {
+  display: block; font-size: 10px; color: #8fb6ff;
+  font-variant-numeric: tabular-nums; margin-top: 2px;
+}
+.prop-opt:hover { border-color: rgba(140,240,255,0.7); }
+.prop-opt.active {
+  border-color: #8ff0ff; color: #fff;
+  box-shadow: 0 0 14px rgba(140,240,255,0.35), inset 0 0 10px rgba(80,200,230,0.2);
+}
+.prop-opt:disabled { opacity: 0.35; cursor: not-allowed; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 520px) {
   .hud { font-size: 12px; gap: 10px; padding: 8px 10px; }

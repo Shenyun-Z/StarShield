@@ -147,8 +147,8 @@ const predictorRenderer = (function () {
       if (b.x == null) continue;
       const risk = predictor.evaluateRisk(sim, i, planet);
       if (wantHint) drawPredictionLine(risk.path, risk, true, sim.sampleDt);
-      // 预警只针对来袭威胁（陨石/彗星）：玩家自己放置的星体即便撞上母星也不扣血（M6）
-      if (wantWarn && risk.hitMother && (b.type === 'asteroid' || b.type === 'comet')) {
+      // 预警只针对来袭威胁：玩家自己放置的星体即便撞上母星也不扣血（M6），场景天体也不预警
+      if (wantWarn && risk.hitMother && physics.isThreat(b)) {
         state.threatWarnings.push({
           x: b.x, y: b.y,
           radius: b.radius || 8,

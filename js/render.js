@@ -29,7 +29,9 @@
     const spacing = 90;        // 网格间距（稀疏，不抢眼）
     const stepLen = 26;        // 每条流线长度
     fieldLines = [];
-    const masses = state.bodies.filter(b => b.type !== 'comet' && b.type !== 'asteroid');
+    // 引力场流线的质量源：排除来袭威胁（它们在动、且多数质量小），
+    // 场景天体与玩家星体都参与（它们的引力正是玩家要读的信息）
+    const masses = state.bodies.filter(b => !physics.isThreat(b));
     for (let gx = spacing / 2; gx < W; gx += spacing) {
       for (let gy = spacing / 2; gy < H; gy += spacing) {
         const f = physics.fieldAt(masses, gx, gy);
@@ -181,7 +183,149 @@
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.radius * 2.2, 0, Math.PI * 2);
       ctx.fill();
+    } else if (b.type === 'splitter' || b.type === 'splitChild') {
+      // 分裂彗星 / 子体：彗星外观 + 横向分叉短线预示分裂
+      if (b.trail && b.trail.length > 1) {
+        ctx.strokeStyle = b.type === 'splitChild' ? 'rgba(255,220,160,0.4)' : 'rgba(255,200,120,0.5)';
+        ctx.lineWidth = b.type === 'splitChild' ? 1.4 : 2;
+        ctx.beginPath();
+        ctx.moveTo(b.trail[0].x, b.trail[0].y);
+        for (let i = 1; i < b.trail.length; i++) ctx.lineTo(b.trail[i].x, b.trail[i].y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = b.type === 'splitChild' ? '#ffe0a0' : '#fff3c4';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+      if (b.type === 'splitter') {
+        ctx.strokeStyle = 'rgba(255,200,120,0.8)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x + 10, b.y - 10);
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x - 10, b.y + 10);
+        ctx.stroke();
+      }
+    } else if (b.type === 'disturber') {
+      // 引力干扰体：紫色核心 + 周期性扩散环（提示脉冲作用范围）
+      const grd = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, b.radius * 2);
+      grd.addColorStop(0, '#f3d9ff');
+      grd.addColorStop(0.45, 'rgba(160,90,230,0.75)');
+      grd.addColorStop(1, 'rgba(80,30,130,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#3a1a5c';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+      drawPulseRings(ctx, b, 0.5, 0.55);
+    } else if (b.type === 'boss') {
+      // Boss：暗紫核心 + 亮边描边，尺寸随剩余段数收缩（受击当帧描边转白）
+      const hp = Number.isFinite(b.hp) ? b.hp : 1;
+      const hpMax = Number.isFinite(b.hpMax) ? b.hpMax : Math.max(hp, 1);
+      const ratio = Math.max(0.45, Math.min(1, hp / hpMax));
+      const r = b.radius * (0.8 + 0.2 * ratio);
+      const grd = ctx.createRadialGradient(b.x, b.y, 2, b.x, b.y, r * 1.7);
+      grd.addColorStop(0, '#f0c8ff');
+      grd.addColorStop(0.5, 'rgba(150,80,220,0.8)');
+      grd.addColorStop(1, 'rgba(60,20,90,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r * 1.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2a1240';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = b.hpDrop > 0 ? '#ffffff' : '#d9a6ff';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+    } else if (b.type === 'companion') {
+      // 伴星：暖白核心 + 轨道环（场景静物）
+      const grd = ctx.createRadialGradient(b.x, b.y, 2, b.x, b.y, b.radius * 2);
+      grd.addColorStop(0, '#fff6d8');
+      grd.addColorStop(0.5, 'rgba(255,214,140,0.55)');
+      grd.addColorStop(1, 'rgba(255,190,90,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffeec2';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,226,138,0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius + 12, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (b.type === 'well' || b.type === 'gravityWell') {
+      // 引力井（场景）/ 道具引力井：深蓝 vs 青蓝旋涡
+      const isProp = b.type === 'gravityWell';
+      const grd = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, b.radius * 2.2);
+      grd.addColorStop(0, isProp ? '#bff2ff' : '#9fd0ff');
+      grd.addColorStop(0.5, isProp ? 'rgba(60,190,220,0.7)' : 'rgba(40,90,180,0.7)');
+      grd.addColorStop(1, 'rgba(10,20,50,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#08122a';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = isProp ? 'rgba(140,240,255,0.8)' : 'rgba(120,180,255,0.6)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius + 5, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (b.type === 'obstacle') {
+      // 乱流障碍：灰岩多边形（复用陨石顶点风格，更暗更静）
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.rotation || 0);
+      ctx.fillStyle = '#5a6478';
+      ctx.strokeStyle = '#8b95a8';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      const verts = b.vertices || [];
+      for (let i = 0; i < verts.length; i++) {
+        const a = (i / verts.length) * Math.PI * 2;
+        const rr = b.radius * (verts[i] || 1);
+        const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    } else if (b.type === 'pulsar') {
+      // 脉冲源：紫色同心脉冲
+      ctx.fillStyle = '#2b1642';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+      drawPulseRings(ctx, b, 0.45, 0.4);
     }
+  }
+
+  // 周期脉冲的可视化：按墙钟相位画 2 圈扩散环（纯表现，不影响物理与预测）
+  function drawPulseRings(ctx, b, speed, alpha) {
+    const R = physics.PULSE_RADIUS || 260;
+    const now = performance.now() / 1000;
+    ctx.strokeStyle = 'rgba(200,155,255,' + alpha + ')';
+    ctx.lineWidth = 1.2;
+    for (let k = 0; k < 2; k++) {
+      const phase = (now * speed + k * 0.5) % 1;
+      ctx.globalAlpha = (1 - phase) * 0.7;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, R * phase, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
   }
 
   function render(canvas, state) {
@@ -339,6 +483,23 @@
         }
         ctx.restore();
       }
+    }
+
+    // 道具释放预览（P2）：激活道具后跟随指针显示影响半径（虚线圆 + 极淡填充）
+    const ap = window.__activeProp;
+    if (ap && state.gameStarted && !state.gameOver && Number.isFinite(ap.x)) {
+      const r = ap.id === 'repulseWave' ? 320 : (ap.id === 'stasis' ? 240 : 170);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(140,240,255,0.7)';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([7, 6]);
+      ctx.beginPath();
+      ctx.arc(ap.x, ap.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(140,240,255,0.06)';
+      ctx.fill();
+      ctx.restore();
     }
 
     // 冲击波环（从母星位置扩散）

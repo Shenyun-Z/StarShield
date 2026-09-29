@@ -111,6 +111,23 @@
         tone({ type: 'sawtooth', f0: 220, f1: 50, dur: 1.10, gain: 0.22 });
         noiseBurst(0.6, 0.18);
         break;
+      case 'split': // 分裂彗星裂开：短促爆裂 + 上扬
+        noiseBurst(0.18, 0.22);
+        tone({ type: 'triangle', f0: 420, f1: 880, dur: 0.16, gain: 0.16 });
+        break;
+      case 'bossHit': // Boss 受击：低沉重击
+        noiseBurst(0.28, 0.30);
+        tone({ type: 'square', f0: 150, f1: 70, dur: 0.28, gain: 0.22 });
+        break;
+      case 'pulse': // 脉冲源扰动：低频短抖动
+        tone({ type: 'sawtooth', f0: 90, f1: 60, dur: 0.22, gain: 0.12 });
+        break;
+      case 'prop': // 道具释放：上扬扫频
+        tone({ type: 'sine', f0: 300, f1: 900, dur: 0.30, gain: 0.18 });
+        break;
+      case 'stasis': // 凝滞：下行柔和长音
+        tone({ type: 'sine', f0: 700, f1: 220, dur: 0.45, gain: 0.14 });
+        break;
       default:
         break;
     }

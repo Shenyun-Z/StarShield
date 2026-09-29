@@ -40,6 +40,19 @@
       </div>
     </div>
 
+    <!-- Boss 分段血条：出现 Boss 时显示（默认隐藏） -->
+    <div id="bossBar" class="boss-bar" style="display:none">
+      <span class="bb-label">BOSS</span>
+      <span id="bbSegs" class="bb-segs"></span>
+    </div>
+
+    <!-- 道具槽：一次性引力类道具（引力脉冲 / 斥力波 / 凝滞） -->
+    <div id="propBar" class="prop-bar hidden">
+      <button id="prop-gravityWell" class="prop-opt" data-prop="gravityWell">引力脉冲<small id="propCount-gravityWell">0</small></button>
+      <button id="prop-repulseWave" class="prop-opt" data-prop="repulseWave">斥力波<small id="propCount-repulseWave">0</small></button>
+      <button id="prop-stasis" class="prop-opt" data-prop="stasis">凝滞<small id="propCount-stasis">0</small></button>
+    </div>
+
     <!-- 星体选择栏：默认隐藏，游戏开始后显示 -->
     <div id="starBar" class="star-bar hidden">
       <span class="star-bar-label">放置：</span>
@@ -156,6 +169,10 @@
           <button class="mode-card" data-mode="campaign">
             <div class="mc-name">闯关模式</div>
             <div class="mc-desc">固定星能 · 层层递进<br>30 关预设关卡，通关解锁下一关，比拼通关进度</div>
+          </button>
+          <button class="mode-card" data-mode="endless">
+            <div class="mc-name">无尽模式</div>
+            <div class="mc-desc">无限波次 · 比拼最高波数<br>难度封顶后仍缓慢上升，看你能守到第几波</div>
           </button>
         </div>
       </div>

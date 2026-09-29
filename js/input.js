@@ -6,6 +6,7 @@
   let placing = false;
   let dragStart = null;
   let previewSeq = 0;         // 预览代次：用于让过期的定时器失效（避免误清新拖拽）
+  let hoverPoint = null;      // 最近一次指针位置（道具放置预览用）
   let activePointerId = null; // 当前拖拽所属指针（多点触控下防止串扰，并为指针捕获提供 id）
 
   // 选择状态
@@ -71,10 +72,28 @@
     if (selMode === 'campaign') {
       titleEl.textContent = `闯关关卡（${levels.length} 关 · 已通关 ${game.getCampaignUnlocked()} 关`
         + ` · 总星数 ${game.getTotalStars()}/${game.totalStarsMax()}）`;
+    } else if (selMode === 'endless') {
+      titleEl.textContent = '无尽模式（无限波次 · 比拼最高波数）';
     } else {
       titleEl.textContent = '关卡（生存共用）';
     }
+    const chapters = (game.CHAPTERS && game.CHAPTERS.length) ? game.CHAPTERS : [];
     levels.forEach((lv, idx) => {
+      // 章节分组标题（P2）：在该章第一关之前插入一行（含该章星数完成度）
+      if (selMode === 'campaign') {
+        const ch = chapters.filter(c => c.from === idx)[0];
+        if (ch) {
+          let stars = 0;
+          for (let k = ch.from; k <= ch.to; k++) stars += game.starsForLevel(k);
+          const maxStars = (ch.to - ch.from + 1) * 3;
+          const head = document.createElement('div');
+          head.className = 'chapter-head';
+          head.innerHTML = `<span class="ch-title">${ch.title}</span>`
+            + `<span class="ch-sub">${ch.subtitle}</span>`
+            + `<span class="ch-stars">★ ${stars}/${maxStars}</span>`;
+          wrap.appendChild(head);
+        }
+      }
       const locked = selMode === 'campaign' && !game.isLevelUnlocked(idx);
       const el = document.createElement('button');
       el.className = 'level-card'
@@ -126,6 +145,9 @@
     if (selMode === 'campaign') {
       btn.textContent = '开始 · 闯关模式';
       hint.textContent = `${lv.name} · ${lv.health} 血 · ${lv.budget} 星能`;
+    } else if (selMode === 'endless') {
+      btn.textContent = '开始 · 无尽模式';
+      hint.textContent = `${lv.name} · 无限波次 · 比拼最高波数`;
     } else {
       btn.textContent = '开始 · 生存模式';
       hint.textContent = `${lv.name} · 无限星能 · 比拼分数`;
@@ -137,7 +159,9 @@
     if (!el) return;
     const s = game.bestForMode('survival');
     const c = game.getCampaignUnlocked();
+    const e = (typeof game.getBestWaves === 'function') ? game.getBestWaves() : 0;
     el.innerHTML = `本机记录：生存最佳 ${s > 0 ? s + ' 分' : '—'}　|　闯关已通关 ${c > 0 ? c + ' 关' : '0 关'}`
+      + `　|　无尽最高 ${e > 0 ? e + ' 波' : '—'}`
       + `　|　总星数 ${game.getTotalStars()}/${game.totalStarsMax()}`;
     // 存档异常提示（M7）：菜单遮罩层级高于 .message 轻提示，故直接渲染进菜单区域
     if (typeof game.takeWarning === 'function') {
@@ -306,6 +330,78 @@
     const up = ui('bpUpgrade');
     if (up && up.disabled !== !info.canUpgrade) up.disabled = !info.canUpgrade;
   }
+  // ===== 一次性道具（P2）=====
+  // 激活流程：点击道具槽选中 → 在画布上点击释放（与放置星体、点选星体互斥）→ Esc 取消
+  let selProp = null;
+  function propNameOf(id) {
+    const list = (typeof game.getProps === 'function') ? game.getProps() : [];
+    const hit = list.filter(p => p.id === id)[0];
+    return hit ? hit.name : id;
+  }
+  function syncPropBar() {
+    const bar = ui('propBar');
+    if (!bar || typeof game.getProps !== 'function') return;
+    const list = game.getProps();
+    for (const p of list) {
+      const cnt = ui('propCount-' + p.id);
+      if (cnt) {
+        const txt = String(p.count);
+        if (cnt.textContent !== txt) cnt.textContent = txt;
+      }
+      const el = document.getElementById('prop-' + p.id);
+      if (el) {
+        if (el.disabled !== (p.count <= 0)) el.disabled = (p.count <= 0);
+        const on = (selProp === p.id);
+        if (uiCache['propOn-' + p.id] !== on) {
+          uiCache['propOn-' + p.id] = on;
+          if (on) el.classList.add('active'); else el.classList.remove('active');
+        }
+      }
+    }
+  }
+  function bindPropBar() {
+    const bar = document.getElementById('propBar');
+    if (!bar) return;
+    const opts = (bar.querySelectorAll ? bar.querySelectorAll('.prop-opt') : []);
+    if (!opts || !opts.forEach) return;
+    opts.forEach(o => o.addEventListener('click', () => {
+      const id = o.dataset ? o.dataset.prop : null;
+      if (!id) return;
+      const count = (game.state.props && game.state.props[id]) || 0;
+      if (count <= 0) { flashMessage('「' + propNameOf(id) + '」已用完'); return; }
+      selProp = (selProp === id) ? null : id;
+      game.clearSelection();                 // 道具与星体选中互斥
+      flashMessage(selProp ? ('已选中「' + propNameOf(id) + '」：点击画布释放') : '已取消道具');
+      syncPropBar();
+    }));
+  }
+
+  // ===== Boss 分段血条（P2）=====
+  function syncBossBar() {
+    const bar = ui('bossBar');
+    const segs = ui('bbSegs');
+    if (!bar || !segs) return;
+    const st = game.state;
+    let boss = null;
+    if (st.gameStarted && !st.gameOver) {
+      for (let i = 0; i < st.bodies.length; i++) {
+        if (st.bodies[i].type === 'boss') { boss = st.bodies[i]; break; }
+      }
+    }
+    const total = boss ? Math.max(1, Math.min(6, boss.hpMax || 1)) : 0;
+    const left = boss ? Math.max(0, Math.min(total, boss.hp || 0)) : 0;
+    const key = total + ':' + left;
+    if (uiCache.bossKey === key) return;     // 脏检查：段数不变则不写 DOM
+    uiCache.bossKey = key;
+    if (!boss) { bar.style.display = 'none'; return; }
+    bar.style.display = '';
+    let html = '';
+    for (let i = 0; i < total; i++) {
+      html += '<span class="bb-seg' + (i < left ? ' on' : '') + '"></span>';
+    }
+    segs.innerHTML = html;
+  }
+
   // 操作面板按钮：升级 / 回收 / 关闭（P1-B）
   function bindBodyPanel() {
     const up = document.getElementById('bpUpgrade');
@@ -498,6 +594,11 @@
     audio.unlock();
   }
   function pointerMove(e) {
+    // 记录指针位置（道具放置预览用；只在能取到坐标时更新，避免 stub 环境缺 getBoundingClientRect 抛错）
+    if (e && Number.isFinite(e.clientX) && canvas
+        && typeof canvas.getBoundingClientRect === 'function') {
+      hoverPoint = canvasPoint(e);
+    }
     if (!placing) return;
     if (!isActivePointer(e)) return;
     const p = canvasPoint(e);
@@ -545,9 +646,20 @@
         vy = (last.dragDy || 0) * n;
       }
     }
-    // 点击（位移 ≤ 阈值）优先用于「选中场上星体」打开操作面板；点空白处仍按原语义放置星体。
+    // 点击（位移 ≤ 阈值）的三级优先级：释放道具 → 选中场上星体 → 放置新星体。
     // 拖拽（有位移）语义完全不变——H4 的指针归属断言依赖 pointerdown 始终进入拖拽预览。
     const clicked = !last || Math.hypot(last.dragDx || 0, last.dragDy || 0) <= DRAG_MIN_DISTANCE;
+    if (clicked && selProp) {
+      const r = game.useProp(selProp, p);
+      if (r && r.ok) {
+        flashMessage(r.reason ? r.reason : ('已释放「' + propNameOf(selProp) + '」'));
+        if (((game.state.props || {})[selProp] || 0) <= 0) selProp = null;
+      } else {
+        flashMessage((r && r.reason) || '无法使用道具');
+      }
+      syncPropBar();
+      return;
+    }
     if (clicked && typeof game.selectBodyAt === 'function') {
       const hit = game.selectBodyAt(p);
       if (hit && hit.ok) {
@@ -671,8 +783,10 @@
       const canNext = reason === 'win' && s.mode === 'campaign';
       nextBtn.style.display = canNext ? '' : 'none';
     }
-    // 闯关/生存模式不同的统计：生存模式隐藏"撑过波次"
-    if (rsWavesItem) rsWavesItem.style.display = s.mode === 'campaign' ? '' : 'none';
+    // 闯关/无尽显示"撑过波次"（无尽模式下它是核心成绩），生存模式隐藏
+    if (rsWavesItem) {
+      rsWavesItem.style.display = (s.mode === 'campaign' || s.mode === 'endless') ? '' : 'none';
+    }
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     set('rsWaves', s.wave);
     set('rsScore', s.score);
@@ -798,6 +912,12 @@
       // 控制条状态（减速额度 / 撤销可用性 / 开关态）+ 星体操作面板 + 轻提示
       syncControlButtons();
       syncBodyPanel();
+      syncPropBar();
+      syncBossBar();
+      // 道具放置预览：把"激活道具 + 指针位置"暴露给渲染层（只读，不参与任何判定）
+      window.__activeProp = (selProp && hoverPoint)
+        ? { id: selProp, x: hoverPoint.x, y: hoverPoint.y }
+        : null;
       if (typeof game.takeNotice === 'function') {
         const notice = game.takeNotice();
         if (notice) flashMessage(notice);
@@ -842,12 +962,18 @@
     bindMenuClear();
     bindAchievements();
     bindBodyPanel();
-    // Z 键撤销（P0-2）、Esc 取消选中（P1-B）：与按钮同源，避免两套判定逻辑
+    bindPropBar();
+    // Z 键撤销（P0-2）、Esc 取消选中与道具激活（P1-B / P2）：与按钮同源，避免两套判定逻辑
     window.addEventListener('keydown', (e) => {
       if (!e || !game.state.gameStarted || game.state.gameOver) return;
       const k = String(e.key || '').toLowerCase();
       if (k === 'z') doUndo();
-      else if (k === 'escape' || k === 'esc') { game.clearSelection(); syncBodyPanel(); }
+      else if (k === 'escape' || k === 'esc') {
+        game.clearSelection();
+        selProp = null;
+        syncBodyPanel();
+        syncPropBar();
+      }
     });
     canvas.addEventListener('pointerdown', pointerDown);
     window.addEventListener('pointermove', pointerMove);

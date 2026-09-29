@@ -23,6 +23,27 @@
   const PREDICT_DT = 0.05;  // 预测积分步长(s)：细步长→高保真，与真实 stepSystem 偏差更小、轨迹更顺滑
   const PREDICT_DUR = 6;    // 预测时长(s) = 3 段 × 2s，与提示线分段一致（绘制端统一取此值）
   const ARROW_SCALE = 0.5;  // 拖拽箭头：1px = 0.5 m/s（输入换算用）
+  const HP_HIT_CD = 0.4;    // 多段天体（Boss）两次受伤的最小间隔(s)：防止贴住不可动天体时逐帧掉段
+  const PULSE_RADIUS = 260; // 引力干扰体脉冲的作用半径(px)
+
+  /* ============ 天体类型分类（单一真源） ============ */
+  // 背景：新增类型后，散落各处的 `type === 'asteroid' || type === 'comet'` 必然漏改，
+  // 会造成"击退不计分 / 撞母星不扣血 / 波次永不结算"等连锁缺陷，因此在这里集中定义。
+  // THREAT：参与波次结算、出界计分、撞母星扣血、黑洞吞噬计分与撞母星预警。
+  const THREAT_TYPES = ['asteroid', 'comet', 'splitter', 'splitChild', 'disturber', 'boss'];
+  // SCENE：场景天体（伴星/引力井/障碍/脉冲源），只参与引力与碰撞，不计威胁。
+  const SCENE_TYPES = ['companion', 'well', 'obstacle', 'pulsar'];
+  // PROP：一次性道具产生的临时场（引力井为临时天体；斥力波/凝滞为瞬时效应）
+  const PROP_TYPES = ['gravityWell', 'repulseWave', 'stasis'];
+
+  function isThreat(b) { return !!b && THREAT_TYPES.indexOf(b.type) >= 0; }
+  function isScene(b) { return !!b && SCENE_TYPES.indexOf(b.type) >= 0; }
+  // 可点选/回收/升级的天体：仅玩家放置的星体与黑洞（场景天体与道具场一律不可操作）
+  function isPickable(b) { return !!b && (b.type === 'star' || b.type === 'blackhole'); }
+  // 需要按时间演化的天体（多段 hp / 周期脉冲 / 有时限）
+  function needsAge(b) {
+    return !!b && ((b.lifespan || 0) > 0 || (b.pulseStrength || 0) !== 0 || (Number.isFinite(b.hp) && b.hp > 1));
+  }
 
   /* ============ 天体结构 ============ */
   // Body(mass, x, y, vx, vy, opts)
@@ -46,10 +67,20 @@
       immovable: !!o.immovable,           // 不可动（黑洞）：只施加引力、自身不移动、吞噬撞来的天体
       dead: false,
       captured: false,                    // 被黑洞吞噬（stepSystem 写入）
-      lifespan: o.lifespan || 0,         // 存活时限(s)，0 = 永久（母星/玩家星体）
+      lifespan: o.lifespan || 0,         // 存活时限(s)，0 = 永久（母星/玩家星体/道具井）
       age: 0,                            // 已存活时间(s)
+      // 多段摧毁（Boss）：hp 默认 1（一次碰撞即毁）；>1 时每次碰撞扣 1 段
+      hp: Number.isFinite(o.hp) ? o.hp : 1,
+      hpCd: 0,                           // 受伤冷却(s)：避免贴住不可动天体时逐帧掉段
+      hpDrop: 0,                         // 本帧是否掉段（game.js 读取后清零，用于表现）
+      // 实心场景天体（伴星/引力井/障碍/脉冲源）：撞上它的运动天体被撞毁，自身不受影响
+      solid: !!o.solid,
+      // 周期脉冲（引力干扰体/脉冲源）：每 pulsePeriod 秒对半径 PULSE_RADIUS 内的天体施加一次冲量
+      pulseStrength: Number.isFinite(o.pulseStrength) ? o.pulseStrength : 0,
+      pulsePeriod: Number.isFinite(o.pulsePeriod) ? o.pulsePeriod : 0,
       // 状态标记（stepSystem 过程中写入，供 game.js 处理得分/扣血后清除）
       hitStar: false, // 撞上母星（母星扣血）
+      hitSolid: false,// 撞上实心场景天体（被撞毁，播蓝白碎裂而非黑洞吞噬特效）
       merged: false,  // 被合并吸收（保留字段，当前版本互撞改为双毁）
       exploded: false // 与其他星体相撞被炸毁（双方同时标记）
     };
@@ -90,6 +121,23 @@
   }
 
   /* ============ 碰撞处理（stepSystem 内部） ============ */
+  // 一次撞击对单个天体的结算：hp > 1（Boss 等多段天体）时扣一段并进入冷却，
+  // 未归零则存活；否则直接销毁。返回 true 表示本次被销毁。
+  function applyImpact(b) {
+    const hp = Number.isFinite(b.hp) ? b.hp : 1;
+    if (hp > 1) {
+      if ((b.hpCd || 0) > 0) return false;         // 冷却中：本帧不再掉段
+      b.hp = hp - 1;
+      b.hpCd = HP_HIT_CD;
+      b.hpDrop = (b.hpDrop || 0) + 1;              // 供 game.js 播放受击表现后清零
+      if (b.hp <= 0) { b.dead = true; b.exploded = true; return true; }
+      return false;
+    }
+    b.dead = true;
+    b.exploded = true;
+    return true;
+  }
+
   function resolveCollisions(bodies) {
     for (let i = 0; i < bodies.length; i++) {
       const a = bodies[i];
@@ -107,18 +155,36 @@
         // 两个不可动天体（如两个黑洞）互不作用
         if (a.immovable && b.immovable) continue;
 
-        // 不可动大质量天体（黑洞 / 母星）：吞掉撞上来的运动天体
+        // 实心场景天体（伴星 / 引力井 / 障碍 / 脉冲源）：撞上来的运动天体被撞毁，实心体不受影响。
+        // 必须放在「不可动吞噬」分支之前——否则会被当成黑洞吞噬（播紫特效并计入黑洞统计）。
+        if (a.solid || b.solid) {
+          const sMover = a.solid ? b : a;
+          if (sMover.solid) continue;                 // 两个实心体互不处理
+          if (!sMover.immovable) {
+            sMover.dead = true;
+            sMover.hitSolid = true;                   // 蓝白碎裂，而非紫黑洞吞噬
+          }
+          continue;
+        }
+
+        // 不可动大质量天体（黑洞 / 母星 / 部分场景天体）：处理撞上来的运动天体
         if (a.immovable || b.immovable) {
           const mover = a.immovable ? b : a;   // 运动天体（撞上来的）
           const anchor = a.immovable ? a : b;  // 不可动天体（母星 / 黑洞）
           if (anchor.isStar) {
-            // 运动天体撞母星：母星扣血，而非被吞噬
+            // 运动天体撞母星：一律摧毁来袭者（Boss 撞母星也在此消失），母星伤害由 game.js 结算
             mover.dead = true;
             mover.hitStar = true;
-          } else {
-            mover.dead = true;
-            mover.captured = true;
+            continue;
           }
+          // 多段天体撞黑洞等不可动天体：冷却内只扣一段，段数归零才算被吞噬（黑洞能重伤 Boss）
+          const mHp = Number.isFinite(mover.hp) ? mover.hp : 1;
+          if (mHp > 1) {
+            if (applyImpact(mover)) mover.captured = true;
+            continue;
+          }
+          mover.dead = true;
+          mover.captured = true;
           continue;
         }
 
@@ -128,12 +194,23 @@
           other.dead = true;
           other.hitStar = true;
         } else {
-          // 任意两个非母星天体物理接触 → 一起炸毁（双方 exploded）
-          a.dead = true; a.exploded = true;
-          b.dead = true; b.exploded = true;
-          // 记录撞击对手，供 game.js 只触发一次爆炸动画/音效（避免同一次碰撞播两遍）
-          a.explodedWith = b;
-          b.explodedWith = a;
+          // 任意两个非母星天体物理接触
+          const aHp = Number.isFinite(a.hp) ? a.hp : 1;
+          const bHp = Number.isFinite(b.hp) ? b.hp : 1;
+          if (aHp > 1 || bHp > 1) {
+            // 含多段天体（Boss）：普通天体照旧被毁，多段天体每次只扣一段（未归零则存活）
+            const aHit = applyImpact(a);
+            const bHit = applyImpact(b);
+            if (aHit) a.explodedWith = b;
+            if (bHit) b.explodedWith = a;
+          } else {
+            // 一起炸毁（双方 exploded）
+            a.dead = true; a.exploded = true;
+            b.dead = true; b.exploded = true;
+            // 记录撞击对手，供 game.js 只触发一次爆炸动画/音效（避免同一次碰撞播两遍）
+            a.explodedWith = b;
+            b.explodedWith = a;
+          }
         }
       }
     }
@@ -193,11 +270,44 @@
     }
     const n = _live.length;
 
+    // 生命周期：存活计时、受伤冷却、限时天体到期。
+    // 这里只依赖 age 与固定常量（不含随机、不依赖墙钟），因此预测器的克隆系统
+    // 会走出与真实完全一致的演化——这是"预测线与实际不飘"承诺的前提。
+    for (let i = 0; i < n; i++) {
+      const b = _live[i];
+      b.age = (b.age || 0) + dt;
+      if (b.hpCd > 0) b.hpCd = Math.max(0, b.hpCd - dt);
+      if (b.lifespan > 0 && b.age >= b.lifespan) { b.dead = true; b.expired = true; }
+    }
+    // 周期脉冲（引力干扰体 / 脉冲源）：跨越周期边界时对附近天体施加一次冲量。
+    // 用 floor(age/period) 判定跨越，避免因步长变化而漏发或重发。
+    for (let i = 0; i < n; i++) {
+      const src = _live[i];
+      if (src.dead || !(src.pulsePeriod > 0) || !src.pulseStrength) continue;
+      const kPrev = Math.floor((src.age - dt) / src.pulsePeriod);
+      const kNow = Math.floor(src.age / src.pulsePeriod);
+      if (kNow <= kPrev) continue;
+      for (let j = 0; j < n; j++) {
+        const t = _live[j];
+        if (t === src || t.dead) continue;
+        if (t.immovable || t.isStar) continue;            // 锚定天体不受脉冲影响
+        const pdx = t.x - src.x, pdy = t.y - src.y;
+        const pd = Math.hypot(pdx, pdy);
+        if (pd > PULSE_RADIUS || pd < 1e-6) continue;
+        const falloff = 1 - pd / PULSE_RADIUS;            // 越近冲量越强
+        const dv = src.pulseStrength * falloff / Math.max(1, Math.sqrt(t.mass || 1) * 0.35);
+        t.vx += (pdx / pd) * dv;                          // 沿径向推离脉冲源
+        t.vy += (pdy / pd) * dv;
+      }
+      src.pulseFired = (src.pulseFired || 0) + 1;          // 供渲染端画扩散环
+    }
+
     // 当前加速度
     accumulateAccel(_live, _ax, _ay);
     // 位置推进（速度 Verlet）
     for (let i = 0; i < n; i++) {
       const b = _live[i];
+      if (b.dead) continue;                  // 本步已到期/已毁
       if (b.isStar || b.immovable) continue; // 母星/黑洞锚定
       b.x += b.vx * dt + 0.5 * _ax[i] * dt * dt;
       b.y += b.vy * dt + 0.5 * _ay[i] * dt * dt;
@@ -207,6 +317,7 @@
     // 速度推进
     for (let i = 0; i < n; i++) {
       const b = _live[i];
+      if (b.dead) continue;
       if (b.isStar || b.immovable) continue;
       b.vx += 0.5 * (_ax[i] + _bx[i]) * dt;
       b.vy += 0.5 * (_ay[i] + _by[i]) * dt;
@@ -229,6 +340,10 @@
     RADIUS_K: RADIUS_K, STAR_R: STAR_R, STAR_MASS: STAR_MASS,
     PREDICT_DT: PREDICT_DT, PREDICT_DUR: PREDICT_DUR,
     ARROW_SCALE: ARROW_SCALE,
+    HP_HIT_CD: HP_HIT_CD, PULSE_RADIUS: PULSE_RADIUS,
+    // 天体类型分类（单一真源，供 game.js / 渲染 / 预测统一判定）
+    THREAT_TYPES: THREAT_TYPES, SCENE_TYPES: SCENE_TYPES, PROP_TYPES: PROP_TYPES,
+    isThreat: isThreat, isScene: isScene, isPickable: isPickable, needsAge: needsAge,
     // 函数
     Body: Body,
     createBody: createBody,
