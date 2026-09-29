@@ -117,17 +117,18 @@ function winCurrentLevel(st) {
 console.log('--- P1-A 星级评价 ---');
 {
   const crit = game.getStarCriteria(0);
-  assert('星级上限与总分上限正确', crit.max === 3 && crit.totalMax === 90,
+  assert('星级上限与总分上限正确（40 关 × 3 星 = 120）',
+    crit.max === 3 && crit.totalMax === 120,
     'max=' + crit.max + ' totalMax=' + crit.totalMax);
   assert('★2 门槛按波数自适应且自洽（≥2 且 ≤ 波数）',
     crit.star2HitLimit >= 2 && crit.star2HitLimit <= crit.totalWaves,
     'limit=' + crit.star2HitLimit + ' waves=' + crit.totalWaves);
   let monoOk = true;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < game.CAMPAIGN_LEVELS.length; i++) {
     const c = game.getStarCriteria(i);
     if (!(c.star2HitLimit >= 2 && c.star2HitLimit <= c.totalWaves)) monoOk = false;
   }
-  assert('30 关门槛全部自洽（不会出现不可达的 2 星）', monoOk);
+  assert('40 关门槛全部自洽（不会出现不可达的 2 星）', monoOk);
 }
 {
   const limit = game.getStarCriteria(0).star2HitLimit;

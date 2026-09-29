@@ -340,8 +340,11 @@ console.log('--- 7. 无尽模式与章节化 ---');
 }
 {
   const chapters = game.CHAPTERS;
-  assert('章节数为 3 且覆盖全部 30 关',
-    chapters.length === 3 && chapters[0].from === 0 && chapters[2].to === 29);
+  assert('章节数为 4 且覆盖全部 40 关',
+    chapters.length === 4 && chapters[0].from === 0
+    && chapters[chapters.length - 1].to === game.CAMPAIGN_LEVELS.length - 1);
+  assert('每章含剧情文案（极简叙事，供章首关横幅展示）',
+    chapters.every(c => typeof c.story === 'string' && c.story.length > 8));
   let contiguous = true;
   for (let i = 1; i < chapters.length; i++) {
     if (chapters[i].from !== chapters[i - 1].to + 1) contiguous = false;

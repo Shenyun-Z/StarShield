@@ -72,6 +72,13 @@
     if (selMode === 'campaign') {
       titleEl.textContent = `闯关关卡（${levels.length} 关 · 已通关 ${game.getCampaignUnlocked()} 关`
         + ` · 总星数 ${game.getTotalStars()}/${game.totalStarsMax()}）`;
+    } else if (selMode === 'challenge') {
+      titleEl.textContent = `挑战关卡（${levels.length} 关 · 已通关 ${game.getChallengeUnlocked()} 关`
+        + ` · 挑战星数 ${game.getChallengeStarsTotal()}/${game.totalStarsMax()}）`;
+    } else if (selMode === 'daily') {
+      const d = game.getDailyState();
+      titleEl.textContent = `每日挑战（${d.key} · 每日一变 · 当日最高 ${d.bestScore} 分`
+        + (d.cleared ? ' · 今日已通关' : '') + '）';
     } else if (selMode === 'endless') {
       titleEl.textContent = '无尽模式（无限波次 · 比拼最高波数）';
     } else {
@@ -80,7 +87,7 @@
     const chapters = (game.CHAPTERS && game.CHAPTERS.length) ? game.CHAPTERS : [];
     levels.forEach((lv, idx) => {
       // 章节分组标题（P2）：在该章第一关之前插入一行（含该章星数完成度）
-      if (selMode === 'campaign') {
+      if (selMode === 'campaign' || selMode === 'challenge') {
         const ch = chapters.filter(c => c.from === idx)[0];
         if (ch) {
           let stars = 0;
@@ -94,7 +101,8 @@
           wrap.appendChild(head);
         }
       }
-      const locked = selMode === 'campaign' && !game.isLevelUnlocked(idx);
+      const locked = (selMode === 'campaign' && !game.isLevelUnlocked(idx))
+        || (selMode === 'challenge' && !game.isChallengeUnlocked(idx));
       const el = document.createElement('button');
       el.className = 'level-card'
         + (idx === selLevelIndex && !locked ? ' selected' : '')
@@ -104,19 +112,58 @@
       // 徽标展示本关规模：闯关=波数，生存=限时秒数
       // （曾显示 scene 的黑洞/恒星数量，但那些天体并不生成，属误导，已移除）
       const badge = totalWaves != null ? (totalWaves + ' 波') : (Math.round(lv.duration || 0) + 's');
-      // 星级行（P1-A）：仅闯关且已解锁时显示；必须独立成 div，
+      // 星级行（P1-A / v1.10 挑战星）：仅闯关与挑战且已解锁时显示；必须独立成 div，
       // 不能塞进 lc-desc（其内容被测试正则要求为"不含标签的纯文本"）。
-      const starRow = selMode === 'campaign' ? `<div class="lc-stars">${starDots(game.starsForLevel(idx))}</div>` : '';
+      const starRow = (selMode === 'campaign' || selMode === 'challenge')
+        ? `<div class="lc-stars">${starDots(selMode === 'challenge' ? game.challengeStarsForLevel(idx) : game.starsForLevel(idx))}</div>`
+        : '';
+      // 挑战修饰符标签（v1.10）：逐条列出，玩家一眼看到本关的额外限制
+      let modsRow = '';
+      const modIds = (selMode === 'challenge' && typeof game.challengeModifiersFor === 'function')
+        ? game.challengeModifiersFor(idx) : [];
+      if (modIds.length) {
+        const names = modIds.map(id => {
+          const d = (game.MODIFIERS || []).filter(m => m.id === id)[0];
+          return d ? d.name : id;
+        });
+        modsRow = `<div class="lc-mods">${names.map(n => '<span class="mod-chip">' + n + '</span>').join('')}</div>`;
+      }
+      // 显示实际生效的初始星能（挑战的「星能减半」会让卡片数字与实战一致，避免文案误导）
+      const halfBudget = modIds.indexOf('halfBudget') >= 0;
+      const shownBudget = halfBudget ? Math.round(lv.budget * 0.5) : lv.budget;
+      const budgetNote = halfBudget ? '（减半）' : '';
+      // 额外任务徽章（v1.10）：只判不罚的附加目标；已达成点亮
+      let taskRow = '';
+      if (lv.task && (selMode === 'campaign' || selMode === 'challenge' || selMode === 'daily')) {
+        const done = (typeof game.isTaskDone === 'function') ? game.isTaskDone(selMode, idx) : false;
+        taskRow = `<div class="lc-task${done ? ' done' : ''}">${done ? '✦ 任务已完成' : '✦ 任务'}：${lv.task.text}</div>`;
+      }
+      // 本关最佳记录（v1.10）：有记录才显示，避免空态噪声
+      let recRow = '';
+      const rec = (typeof game.getRecord === 'function') ? game.getRecord(selMode, idx) : null;
+      if (rec) {
+        recRow = `<div class="lc-record">最佳 ${rec.bestScore} 分 · 最少受击 ${rec.leastHits}`
+          + (rec.fastestWin > 0 ? ' · 最快 ' + rec.fastestWin + 's' : '') + '</div>';
+      }
+      // 未解锁原因：挑战模式看挑战进度；第四章另需累计星星达标
+      let lockMsg = '通关前一关后开启';
+      if (selMode === 'challenge') lockMsg = '通关挑战模式前一关后开启';
+      else if (idx >= 30 && game.getTotalStars() < game.getCh4StarGate()) {
+        lockMsg = `累计星星需达 ${game.getCh4StarGate()}（当前 ${game.getTotalStars()}）`;
+      }
       el.innerHTML = locked
         ? `
           <div class="lc-name">${idx + 1} 关 · 未解锁<span class="badge">🔒</span></div>
-          <div class="lc-desc">通关前一关后开启</div>
+          <div class="lc-desc">${lockMsg}</div>
         `
         : `
           <div class="lc-name">${lv.name}<span class="badge">${badge}</span></div>
           ${starRow}
+          ${modsRow}
           <div class="lc-desc">${lv.intro || lv.desc || ''}</div>
-          <div class="lc-meta">血 ${lv.health} · 星能 ${lv.budget}${lv.difficulty != null ? ' · 难度 ' + Number(lv.difficulty).toFixed(2) : ''}</div>
+          <div class="lc-meta">血 ${lv.health} · 星能 ${shownBudget}${budgetNote}${lv.difficulty != null ? ' · 难度 ' + Number(lv.difficulty).toFixed(2) : ''}</div>
+          ${taskRow}
+          ${recRow}
         `;
       el.addEventListener('click', () => {
         if (locked) {
@@ -145,6 +192,15 @@
     if (selMode === 'campaign') {
       btn.textContent = '开始 · 闯关模式';
       hint.textContent = `${lv.name} · ${lv.health} 血 · ${lv.budget} 星能`;
+    } else if (selMode === 'challenge') {
+      btn.textContent = '开始 · 挑战模式';
+      const mods = (typeof game.challengeModifiersFor === 'function') ? game.challengeModifiersFor(selLevelIndex) : [];
+      hint.textContent = `${lv.name} · ${mods.length} 项修饰符 · ${lv.health} 血 · ${lv.budget} 星能`;
+    } else if (selMode === 'daily') {
+      btn.textContent = '开始 · 每日挑战';
+      const d = game.getDailyState();
+      hint.textContent = `${lv.name} · 今日${d.cleared ? '已通关' : '未通关'}`
+        + ` · 当日最高 ${d.bestScore} 分 / ${d.bestWave} 波`;
     } else if (selMode === 'endless') {
       btn.textContent = '开始 · 无尽模式';
       hint.textContent = `${lv.name} · 无限波次 · 比拼最高波数`;
@@ -160,9 +216,20 @@
     const s = game.bestForMode('survival');
     const c = game.getCampaignUnlocked();
     const e = (typeof game.getBestWaves === 'function') ? game.getBestWaves() : 0;
+    const ch = (typeof game.getChallengeUnlocked === 'function') ? game.getChallengeUnlocked() : 0;
+    const tdone = (typeof game.getTasksDoneCount === 'function') ? game.getTasksDoneCount() : 0;
     el.innerHTML = `本机记录：生存最佳 ${s > 0 ? s + ' 分' : '—'}　|　闯关已通关 ${c > 0 ? c + ' 关' : '0 关'}`
       + `　|　无尽最高 ${e > 0 ? e + ' 波' : '—'}`
-      + `　|　总星数 ${game.getTotalStars()}/${game.totalStarsMax()}`;
+      + `　|　总星数 ${game.getTotalStars()}/${game.totalStarsMax()}`
+      + `　|　挑战已通关 ${ch} 关　|　额外任务 ${tdone} 项`;
+    // 每日挑战卡片的当日状态（跨日自动刷新，读的是本机日期派生的进度）
+    const dailyBest = document.getElementById('dailyBest');
+    if (dailyBest && typeof game.getDailyState === 'function') {
+      const d = game.getDailyState();
+      const txt = d.cleared ? ('今日已通关 · 最高 ' + d.bestScore + ' 分')
+        : (d.bestScore > 0 ? ('今日最高 ' + d.bestScore + ' 分') : '今日未挑战');
+      if (dailyBest.textContent !== txt) dailyBest.textContent = txt;
+    }
     // 存档异常提示（M7）：菜单遮罩层级高于 .message 轻提示，故直接渲染进菜单区域
     if (typeof game.takeWarning === 'function') {
       const w = game.takeWarning();
@@ -266,10 +333,12 @@
     if (slowBtn && typeof game.slowMotionState === 'function') {
       const sm = game.slowMotionState();
       const slowed = st.timeScale < 1;
-      const txt = sm.exhausted
-        ? '时间：正常 · 已耗尽'
-        : (slowed ? '时间：减速 · ' + sm.quota.toFixed(1) + 's'
-                  : '时间：正常 · ' + Math.ceil(sm.quota) + 's');
+      const txt = sm.disabled
+        ? '时间：禁用（本关无减速）'
+        : (sm.exhausted
+            ? '时间：正常 · 已耗尽'
+            : (slowed ? '时间：减速 · ' + sm.quota.toFixed(1) + 's'
+                      : '时间：正常 · ' + Math.ceil(sm.quota) + 's'));
       setBtnText(slowBtn, txt);
       setBtnClass(slowBtn, 'low', sm.low && !sm.exhausted, 'slowLow');
       setBtnClass(slowBtn, 'exhausted', sm.exhausted, 'slowExhausted');
@@ -298,6 +367,39 @@
     if (r && r.ok) flashMessage('已撤销放置，返还 ' + r.refund + ' 星能');
     else flashMessage((r && r.reason) || '无法撤销');
     syncControlButtons();
+  }
+
+  // ===== 下一波来袭预告（v1.10）=====
+  // 只在"模式/关卡/波次变化的那一帧"重算并重绘（脏检查键含三者），
+  // 避免主循环每帧遍历波次数组与写 DOM。
+  function syncWavePreview() {
+    const st = game.state;
+    const key = (st.gameStarted && !st.gameOver && typeof game.getWavePreview === 'function')
+      ? (st.mode + ':' + st.levelIndex + ':' + st.wave)
+      : 'off';
+    if (uiCache.wpKey === key) return;
+    uiCache.wpKey = key;
+    const box = ui('wavePreview');
+    const body = ui('wavePreviewBody');
+    if (!box || !body) return;
+    const pv = (typeof game.getWavePreview === 'function') ? game.getWavePreview() : null;
+    if (!pv || !pv.available) {
+      if (box.style.display !== 'none') box.style.display = 'none';
+      return;
+    }
+    const cls = 'hud-group preview-group' + (pv.boss ? ' boss' : '');
+    if (box.className !== cls) box.className = cls;
+    if (box.style.display !== '') box.style.display = '';
+    let html = '';
+    if (pv.boss) html += '<span class="wp-item"><span class="wp-dot boss"></span>BOSS</span>';
+    for (let i = 0; i < pv.counts.length; i++) {
+      const c = pv.counts[i];
+      if (c.kind === 'boss') continue;             // BOSS 已前置展示，避免重复
+      html += '<span class="wp-item"><span class="wp-dot ' + c.kind + '"></span>' + c.name + ' ×' + c.count + '</span>';
+    }
+    if (pv.sides.length) html += '<span class="wp-side">' + pv.sides.join('/') + '</span>';
+    html += '<span class="wp-total">' + pv.waveNo + '/' + pv.total + '</span>';
+    if (body.innerHTML !== html) body.innerHTML = html;
   }
 
   // ===== 星体操作面板（P1-B）=====
@@ -687,6 +789,8 @@
   // ===== 结算面板 =====
   function showResult(reason) {
     const s = game.getCurrentRunStats();
+    // 固定波次模式（闯关/挑战/每日）在标题、文案、波次行上口径一致
+    const fixedWave = (s.mode === 'campaign' || s.mode === 'challenge' || s.mode === 'daily');
     const title = document.getElementById('resultTitle');
     const sub = document.getElementById('resultSubtitle');
     const rsWavesItem = document.getElementById('rsWavesItem');
@@ -704,7 +808,7 @@
         title.style.webkitBackgroundClip = 'text';
         title.style.backgroundClip = 'text';
         title.style.color = 'transparent';
-      } else if (s.mode === 'campaign') {
+      } else if (fixedWave) {
         title.textContent = '防线失守';
         title.style.background = '';
         title.style.webkitBackgroundClip = '';
@@ -720,13 +824,13 @@
     }
     if (sub) {
       if (reason === 'win') {
-        sub.textContent = s.mode === 'campaign'
+        sub.textContent = fixedWave
           ? `${s.levelName} · 已击退全部 ${s.totalWaves || 0} 波，本关目标达成！`
           : `${s.levelName} · 成功撑过全部 ${s.totalWaves || 0} 波`;
       } else if (reason === 'timeup') {
         sub.textContent = `${s.levelName} · 存活 ${s.duration || 0}s，时间到达成目标`;
       } else {
-        sub.textContent = s.mode === 'campaign'
+        sub.textContent = fixedWave
           ? `${s.levelName} · 母星被摧毁，止步于第 ${s.wave || 0} 波（共 ${s.totalWaves || 0} 波）`
           : `${s.levelName} · 母星生命归零，共撑过 ${s.wave || 0} 波`;
       }
@@ -734,14 +838,17 @@
     // 星级评价（P1-A）：仅闯关模式展示；通关给星（只增不减已在 game 侧落盘）
     const starsBox = document.getElementById('resultStars');
     if (starsBox) {
-      if (s.mode === 'campaign') {
+      if (s.mode === 'campaign' || s.mode === 'challenge') {
         const idx = Number.isFinite(s.levelIndex) ? s.levelIndex : 0;
         const crit = game.getStarCriteria(idx);
         const earned = game.computeStars({
           mode: s.mode, endReason: s.endReason,
           hitCount: s.hits, totalWaves: s.totalWaves || crit.totalWaves,
         });
-        const best = game.starsForLevel(idx);
+        // 挑战星与闯关星各自独立（挑战星不并入闯关总星数）
+        const best = (s.mode === 'challenge')
+          ? game.challengeStarsForLevel(idx)
+          : game.starsForLevel(idx);
         starsBox.style.display = '';
         const starRow = document.getElementById('rsStarRow');
         if (starRow) {
@@ -778,14 +885,58 @@
     }
 
     // 结算面板「下一关」按钮：仅闯关模式通关时显示（解锁下一关后直接可玩）
+    // 额外任务结果（v1.10，只判不罚）：达成显示暖金，未达成显示灰色文案
+    const taskBox = document.getElementById('resultTask');
+    if (taskBox) {
+      const t = game.state.lastTask;
+      if (t && t.id) {
+        taskBox.className = 'result-task' + (t.done ? ' done' : '');
+        taskBox.textContent = t.done
+          ? ('✦ 额外任务达成：' + t.text + (t.already ? '（此前已完成）' : ''))
+          : ('✦ 额外任务未达成：' + t.text);
+        taskBox.style.display = '';
+      } else {
+        taskBox.style.display = 'none';
+        taskBox.textContent = '';
+      }
+    }
+    // 本关最佳记录对比（v1.10）：新纪录高亮提示
+    const recBox = document.getElementById('resultRecord');
+    if (recBox) {
+      const lr = game.state.lastRecord;
+      if (lr && lr.record) {
+        const r = lr.record;
+        const tags = [];
+        if (lr.newBest.first) tags.push('首次记录');
+        else {
+          if (lr.newBest.score) tags.push('最高分');
+          if (lr.newBest.leastHits) tags.push('最少受击');
+          if (lr.newBest.fastestWin) tags.push('最快通关');
+        }
+        recBox.className = 'result-record' + (tags.length ? ' new' : '');
+        recBox.textContent = '纪录：最佳 ' + r.bestScore + ' 分 · 最少受击 ' + r.leastHits
+          + (r.fastestWin > 0 ? ' · 最快 ' + r.fastestWin + 's' : '')
+          + (tags.length ? '　★ ' + tags.join(' / ') : '')
+          // 每日挑战额外展示"当日"口径（跨日会重置，与关卡最佳记录不是同一件事）
+          + ((game.state.lastDaily && game.state.lastDaily.state)
+              ? ('　|　今日最佳 ' + game.state.lastDaily.state.bestScore + ' 分 / '
+                 + game.state.lastDaily.state.bestWave + ' 波')
+              : '');
+        recBox.style.display = '';
+      } else {
+        recBox.style.display = 'none';
+        recBox.textContent = '';
+      }
+    }
+    // 结算面板「下一关」按钮：闯关/挑战通关且下一关已解锁时可继续
     const nextBtn = document.getElementById('resultNext');
     if (nextBtn) {
-      const canNext = reason === 'win' && s.mode === 'campaign';
+      const canNext = reason === 'win' && (s.mode === 'campaign' || s.mode === 'challenge');
       nextBtn.style.display = canNext ? '' : 'none';
     }
-    // 闯关/无尽显示"撑过波次"（无尽模式下它是核心成绩），生存模式隐藏
+    // 固定波次模式与无尽显示"撑过波次"（无尽模式下它是核心成绩），生存模式隐藏
     if (rsWavesItem) {
-      rsWavesItem.style.display = (s.mode === 'campaign' || s.mode === 'endless') ? '' : 'none';
+      rsWavesItem.style.display = (fixedWave || s.mode === 'endless') ? '' : 'none';
     }
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     set('rsWaves', s.wave);
@@ -813,8 +964,10 @@
   }
 
   // 暴露给 game 模块：用于返回菜单时刷新最佳战绩显示
+  // （关卡卡片也要一起刷新：本局可能产生了新纪录、完成了额外任务、推进了挑战进度）
   window.__refreshMenuBest = function () {
     renderMenuBest();
+    renderLevelCards();
   };
   function bindResultActions() {
     document.getElementById('resultRetry').addEventListener('click', () => {
@@ -830,9 +983,21 @@
     const nextBtn = document.getElementById('resultNext');
     if (nextBtn) {
       nextBtn.addEventListener('click', () => {
+        const mode = game.state.mode;
         const nextIdx = game.state.levelIndex + 1;
+        if (mode === 'challenge') {
+          if (game.isChallengeUnlocked(nextIdx)) {
+            game.startGame({ mode: 'challenge', levelIndex: nextIdx });
+          } else {
+            flashMessage('请先通关挑战模式当前关以解锁下一关');
+          }
+          return;
+        }
+        if (mode !== 'campaign') return;
         if (game.isLevelUnlocked(nextIdx)) {
           game.startGame({ mode: 'campaign', levelIndex: nextIdx });
+        } else if (nextIdx >= 30) {
+          flashMessage('第四章还需累计星星达 ' + game.getCh4StarGate() + '（当前 ' + game.getTotalStars() + '）');
         } else {
           flashMessage('请先通关当前关以解锁下一关');
         }
@@ -914,6 +1079,7 @@
       syncBodyPanel();
       syncPropBar();
       syncBossBar();
+      syncWavePreview();
       // 道具放置预览：把"激活道具 + 指针位置"暴露给渲染层（只读，不参与任何判定）
       window.__activeProp = (selProp && hoverPoint)
         ? { id: selProp, x: hoverPoint.x, y: hoverPoint.y }

@@ -66,6 +66,16 @@
   const BODY_PICK_PAD = 8;          // 点选星体的命中放宽（px，便于触屏）
   // ===== 成就（P1-C）=====
   const ACHIEVEMENTS_KEY = 'starshield_achievements';
+  // ===== v1.10 新增存档键（挑战 / 每日挑战 / 额外任务 / 每关最佳记录）=====
+  const CHALLENGE_KEY = 'starshield_challenge';
+  const DAILY_KEY = 'starshield_daily';
+  const TASKS_KEY = 'starshield_tasks';
+  const RECORDS_KEY = 'starshield_records';
+  // 第四章（新增内容）的解锁门槛：通关第 30 关之后，还需累计星星达到门槛。
+  // 只作用于 idx >= 30 的新关卡——前 30 关的解锁语义与可达性逐位不变（不做进度倒退）。
+  // 老存档经 migrateStars 迁移后通常已有 30 星，回玩若干关拿到 2-3 星即可达标。
+  const CH4_START = 30;
+  const CH4_STAR_GATE = 40;
   // 母星与玩家星体之间最小距离（半径 + 缓冲）。
   // 必须与 input.js 的 isInsidePlanet 使用同一个值，避免判定不一致。
   const PLANET_FORBIDDEN_PAD = 34;     // px
@@ -136,6 +146,7 @@
     shake: 0,
     health: BASE_HEALTH,
     budget: 0,
+    initialBudget: 0,       // 本局生效后的初始星能（修饰符生效后写入，见 setupLevel）
     // 注意：不再保存总分字段。总分一律由 integerScore() 从四类明细派生，
     // 避免「浮点累加值」与「明细代数和」两套真值漂移（见 M2）。
     wave: 0,
@@ -161,6 +172,13 @@
     props: { gravityWell: 0, repulseWave: 0, stasis: 0 },   // 持有数
     propsUsed: 0,            // 本局使用次数
     stasisTime: 0,           // 凝滞剩余时长（真实秒）
+    // v1.10：模式扩展
+    modifiers: [],           // 本局生效的挑战修饰符 id（[] = 无修饰）
+    blackholesPlaced: 0,     // 本局放置的黑洞数（任务 noBlackhole 判定用）
+    isLastWave: false,       // 当前波是否为该关最后一波（跨局必须复位，见 setupLevel）
+    lastTask: null,          // 最近一局的任务结果（结算面板用）
+    lastRecord: null,        // 最近一局的纪录对比（结算面板用）
+    lastDaily: null,         // 最近一局的每日挑战成绩（结算面板用）
     comets: 0,
     asteroids: 0,
     starsPlaced: 0,
@@ -201,6 +219,8 @@
     'starshield_best_score', 'starshield_best_waves',
     'starshield_campaign_unlocked', 'starshield_audio',
     SETTINGS_KEY, STARS_KEY, ACHIEVEMENTS_KEY,
+    // v1.10：挑战进度 / 每日挑战 / 额外任务 / 每关最佳记录
+    CHALLENGE_KEY, DAILY_KEY, TASKS_KEY, RECORDS_KEY,
   ];
   // 存档异常反馈（M7）：localStorage 损坏/配额超限不再静默吞掉，
   // 记录一条待展示的提示，由 input.js 在回到菜单时用轻提示呈现给玩家。
@@ -355,9 +375,10 @@
     };
   }
   // 纯函数：星级只由「模式 + 结束原因 + 受击次数 + 总波数」决定，便于 UI 预览与独立测试。
-  // 生存模式不计星（保持「比拼累计分数」的既有口径不变）。
+  // 生存/无尽不计星（保持「比拼累计分数/最高波数」的既有口径不变）；
+  // 闯关与挑战（都是固定波次模式）计星，但落在**两张独立表**里，互不影响。
   function computeStars(s) {
-    if (!s || s.mode !== 'campaign') return 0;
+    if (!s || (s.mode !== 'campaign' && s.mode !== 'challenge')) return 0;
     if (s.endReason !== 'win') return 0;
     const hits = Math.max(0, parseInt(s.hitCount, 10) || 0);
     if (hits === 0) return STAR_MAX_PER_LEVEL;
@@ -372,6 +393,15 @@
     state.lastStars = earned;
     if (earned <= 0) return 0;
     const key = String(state.levelIndex);
+    // 挑战模式的星写入独立表（不并入闯关总星数：该值同时驱动成就与第四章门槛，
+    // 混入挑战星会让两处语义一起漂移）
+    if (state.mode === 'challenge') {
+      if (earned > (challenge.stars[key] || 0)) {
+        challenge.stars[key] = earned;
+        saveChallenge();
+      }
+      return earned;
+    }
     if (earned > (stars[key] || 0)) {
       stars[key] = earned;
       saveStars();
@@ -470,6 +500,334 @@
     return list;
   }
 
+  // ===== 模式单一真源（v1.10）=====
+  // 固定波次模式：关卡自带 waves 数组、有明确终局（击退全部波次即通关）。
+  // 胜利判定 / HUD 波次显示 / 道具配额 / 波次道具补给 / 统计口径都读它，
+  // 避免"新增模式后某处仍按 campaign 判断"造成隐形缺陷（本批次最大的风险来源）。
+  function isFixedWaveMode(mode) {
+    const m = mode || state.mode;
+    return m === 'campaign' || m === 'challenge' || m === 'daily';
+  }
+
+  // ===== 挑战修饰符（v1.10）=====
+  // 声明式定义；各个拦截点只读 hasModifier()，不在别处自行推导规则。
+  const MODIFIERS = [
+    { id: 'noProps',     name: '禁道具',     desc: '本局不发放任何道具' },
+    { id: 'fastThreats', name: '来袭加速',   desc: '所有来袭威胁速度 ×1.5' },
+    { id: 'halfBudget',  name: '星能减半',   desc: '初始星能只有一半' },
+    { id: 'noBlackhole', name: '禁黑洞',     desc: '不能放置黑洞' },
+    { id: 'noRecycle',   name: '禁回收升级', desc: '不能回收或升级星体' },
+    { id: 'noSlow',      name: '禁减速',     desc: '本局没有减速额度' },
+  ];
+  const MODIFIER_ORDER = MODIFIERS.map(m => m.id);
+  // 挑战模式：按关卡序号确定性挂载递增修饰符（每 6 关加一条，上限 5 条）。
+  // 确定性是硬要求——"挑战模式第 N 关"对所有玩家必须是同一套规则。
+  function challengeModifiersFor(levelIndex) {
+    const idx = Math.max(0, parseInt(levelIndex, 10) || 0);
+    const n = Math.min(5, 1 + Math.floor(idx / 6));
+    return MODIFIER_ORDER.slice(0, n);
+  }
+  function modifierDefs(ids) {
+    const list = Array.isArray(ids) ? ids : [];
+    return list.map(id => {
+      const d = MODIFIERS.filter(m => m.id === id)[0];
+      return d ? { id: d.id, name: d.name, desc: d.desc } : { id: String(id), name: String(id), desc: '' };
+    });
+  }
+  function hasModifier(id) {
+    return Array.isArray(state.modifiers) && state.modifiers.indexOf(id) >= 0;
+  }
+  function getActiveModifiers() { return modifierDefs(state.modifiers); }
+
+  // ===== 每关额外任务（v1.10）=====
+  // 与成就同构：声明式判定、只读结算统计、幂等存档（只增不减）。
+  // 语义：**只判不罚**——达成不给星、不返还星能，因此不改变任何一关的既有平衡与可达性。
+  const TASK_CHECKS = {
+    noProp:      (s) => s.propsUsed === 0,
+    noSlow:      (s) => s.slowUsedSeconds <= 0,
+    noBlackhole: (s) => s.blackholesPlaced === 0,
+    noRecycle:   (s) => s.recycles === 0 && s.upgrades === 0,
+    thrifty:     (s) => s.budgetLeft >= Math.round((s.levelBudget || 0) * 0.5),
+    noHit:       (s) => s.hits === 0,
+  };
+  let tasksDone = Object.create(null);        // { "<mode>:<idx>": true }
+  function taskKey(mode, levelIndex) {
+    const m = mode || state.mode;
+    const idx = parseInt(levelIndex, 10);
+    return String(m) + ':' + (Number.isFinite(idx) ? idx : state.levelIndex);
+  }
+  function loadTasks() {
+    let raw = null;
+    try { raw = localStorage.getItem(TASKS_KEY); } catch (e) { setWarning('任务存档读取失败：本地存储不可用'); }
+    tasksDone = Object.create(null);
+    if (raw) {
+      let obj = null;
+      try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+      if (!obj || typeof obj !== 'object') {
+        setWarning('任务存档已损坏，已回退为空进度');
+      } else {
+        for (const k in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k]) tasksDone[k] = true;
+        }
+      }
+    }
+    return getTasksDoneCount();
+  }
+  function saveTasks() {
+    try { localStorage.setItem(TASKS_KEY, JSON.stringify(tasksDone)); return true; }
+    catch (e) { setWarning('任务保存失败：本地存储不可用或已满'); return false; }
+  }
+  function isTaskDone(mode, levelIndex) { return !!tasksDone[taskKey(mode, levelIndex)]; }
+  function getTasksDoneCount() { return Object.keys(tasksDone).length; }
+  // 本局任务判定（仅固定波次模式；未通关不判定、不记录）
+  function recordRunTask() {
+    const lvl = state.level;
+    if (!isFixedWaveMode() || !lvl || !lvl.task) {
+      return { done: false, already: false, id: '', text: '' };
+    }
+    const key = taskKey();
+    const already = !!tasksDone[key];
+    if (state.endReason !== 'win') return { done: false, already: already, id: lvl.task.id, text: lvl.task.text };
+    const check = TASK_CHECKS[lvl.task.id];
+    let hit = false;
+    try { hit = !!check(getCurrentRunStats()); } catch (e) { hit = false; }
+    if (!hit) return { done: false, already: already, id: lvl.task.id, text: lvl.task.text };
+    if (!already) { tasksDone[key] = true; saveTasks(); }
+    return { done: true, already: already, id: lvl.task.id, text: lvl.task.text };
+  }
+
+  // ===== 每关最佳记录（v1.10）=====
+  // 键为 "<mode>:<idx>"：闯关 / 挑战 / 每日 / 生存 / 无尽 各自独立，互不干扰。
+  let recordsByKey = Object.create(null);
+  function loadRecords() {
+    let raw = null;
+    try { raw = localStorage.getItem(RECORDS_KEY); } catch (e) { setWarning('最佳记录读取失败：本地存储不可用'); }
+    recordsByKey = Object.create(null);
+    if (raw) {
+      let obj = null;
+      try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+      if (!obj || typeof obj !== 'object') {
+        setWarning('最佳记录已损坏，已回退为空进度');
+      } else {
+        for (const k in obj) {
+          if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+          const v = obj[k];
+          if (!v || typeof v !== 'object') continue;
+          recordsByKey[k] = {
+            bestScore: Math.max(0, Math.round(Number(v.bestScore) || 0)),
+            leastHits: Math.max(0, Math.round(Number(v.leastHits) || 0)),
+            fastestWin: Math.max(0, Math.round(Number(v.fastestWin) || 0)),
+            won: !!v.won,
+            plays: Math.max(0, Math.round(Number(v.plays) || 0)),
+          };
+        }
+      }
+    }
+    return Object.keys(recordsByKey).length;
+  }
+  function saveRecords() {
+    try { localStorage.setItem(RECORDS_KEY, JSON.stringify(recordsByKey)); return true; }
+    catch (e) { setWarning('最佳记录保存失败：本地存储不可用或已满'); return false; }
+  }
+  function getRecord(mode, levelIndex) {
+    return recordsByKey[taskKey(mode, levelIndex)] || null;
+  }
+  // 结算时择优写入；返回 { record, newBest } 供结算面板展示"新纪录"
+  function recordRun() {
+    if (!state.level) return null;
+    const key = taskKey();
+    const cur = recordsByKey[key] || null;
+    const score = integerScore();
+    const hits = Math.max(0, state.hitCount);
+    const won = state.endReason === 'win';
+    const duration = Math.max(0, Math.round(state.gameTime));
+    const next = cur ? Object.assign({}, cur) : { bestScore: 0, leastHits: 0, fastestWin: 0, won: false, plays: 0 };
+    const newBest = { score: false, leastHits: false, fastestWin: false, first: !cur };
+    if (!cur || score > next.bestScore) { if (cur) newBest.score = true; next.bestScore = score; }
+    if (!cur || hits < next.leastHits) { if (cur) newBest.leastHits = true; next.leastHits = hits; }
+    if (won && (!next.won || !next.fastestWin || duration < next.fastestWin)) {
+      if (next.won && next.fastestWin > 0) newBest.fastestWin = true;
+      next.fastestWin = duration;
+    }
+    next.won = next.won || won;
+    next.plays += 1;
+    recordsByKey[key] = next;
+    saveRecords();
+    return { record: Object.assign({}, next), newBest: newBest };
+  }
+
+  // ===== 挑战模式进度存档（v1.10）=====
+  // { unlocked, stars: {"<idx>":1|2|3}, best: {"<idx>":{bestScore,leastHits,fastestWin,won,plays}} }
+  // 挑战星**不并入** getTotalStars()：闯关星级同时驱动成就与第四章门槛，混入会污染两处语义。
+  let challenge = { unlocked: 0, stars: Object.create(null), best: Object.create(null) };
+  function parseChallenge(raw) {
+    const out = { unlocked: 0, stars: Object.create(null), best: Object.create(null) };
+    if (!raw) return out;
+    let obj = null;
+    try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+    if (!obj || typeof obj !== 'object') {
+      setWarning('挑战存档已损坏，已回退为空进度');   // 损坏不静默（M7 口径）
+      return out;
+    }
+    out.unlocked = clampInt(obj.unlocked, 0, CAMPAIGN_LEVELS.length);
+    if (obj.stars && typeof obj.stars === 'object') {
+      for (const k in obj.stars) {
+        if (!Object.prototype.hasOwnProperty.call(obj.stars, k)) continue;
+        const idx = parseInt(k, 10);
+        const v = parseInt(obj.stars[k], 10);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= CAMPAIGN_LEVELS.length) continue;
+        if (!Number.isFinite(v) || v <= 0) continue;
+        out.stars[String(idx)] = clamp(v, 1, STAR_MAX_PER_LEVEL);
+      }
+    }
+    if (obj.best && typeof obj.best === 'object') {
+      for (const k in obj.best) {
+        if (!Object.prototype.hasOwnProperty.call(obj.best, k)) continue;
+        const idx = parseInt(k, 10);
+        const v = obj.best[k];
+        if (!Number.isFinite(idx) || idx < 0 || idx >= CAMPAIGN_LEVELS.length) continue;
+        if (!v || typeof v !== 'object') continue;
+        out.best[String(idx)] = {
+          bestScore: Math.max(0, Math.round(Number(v.bestScore) || 0)),
+          leastHits: Math.max(0, Math.round(Number(v.leastHits) || 0)),
+          fastestWin: Math.max(0, Math.round(Number(v.fastestWin) || 0)),
+          won: !!v.won,
+          plays: Math.max(0, Math.round(Number(v.plays) || 0)),
+        };
+      }
+    }
+    return out;
+  }
+  function loadChallenge() {
+    let raw = null;
+    try { raw = localStorage.getItem(CHALLENGE_KEY); } catch (e) { setWarning('挑战存档读取失败：本地存储不可用'); }
+    challenge = parseChallenge(raw);
+    return getChallengeUnlocked();
+  }
+  function saveChallenge() {
+    try { localStorage.setItem(CHALLENGE_KEY, JSON.stringify(challenge)); return true; }
+    catch (e) { setWarning('挑战存档保存失败：本地存储不可用或已满'); return false; }
+  }
+  function getChallengeUnlocked() { return challenge.unlocked; }
+  function isChallengeUnlocked(idx) {
+    const i = parseInt(idx, 10);
+    return Number.isFinite(i) && i >= 0 && i <= challenge.unlocked;
+  }
+  function unlockNextChallenge() {
+    if (state.mode !== 'challenge') return;
+    const next = state.levelIndex + 1;
+    if (next > challenge.unlocked && next < CAMPAIGN_LEVELS.length) {
+      challenge.unlocked = next;
+      saveChallenge();
+    }
+  }
+  function challengeStarsForLevel(idx) {
+    const v = parseInt(challenge.stars[String(idx)] || '0', 10);
+    return Number.isFinite(v) ? clamp(v, 0, STAR_MAX_PER_LEVEL) : 0;
+  }
+  function getChallengeStarsTotal() {
+    let sum = 0;
+    for (const k in challenge.stars) {
+      if (Object.prototype.hasOwnProperty.call(challenge.stars, k)) sum += challenge.stars[k];
+    }
+    return sum;
+  }
+  // 挑战成绩与闯关共用同一套择优逻辑，但落在独立的 best 表里
+  function recordChallengeRun() {
+    if (state.mode !== 'challenge') return null;
+    const key = String(state.levelIndex);
+    const cur = challenge.best[key] || null;
+    const score = integerScore();
+    const hits = Math.max(0, state.hitCount);
+    const won = state.endReason === 'win';
+    const duration = Math.max(0, Math.round(state.gameTime));
+    const next = cur ? Object.assign({}, cur) : { bestScore: 0, leastHits: 0, fastestWin: 0, won: false, plays: 0 };
+    if (!cur || score > next.bestScore) next.bestScore = score;
+    if (!cur || hits < next.leastHits) next.leastHits = hits;
+    if (won && (!next.won || !next.fastestWin || duration < next.fastestWin)) next.fastestWin = duration;
+    next.won = next.won || won;
+    next.plays += 1;
+    challenge.best[key] = next;
+    saveChallenge();
+    return Object.assign({}, next);
+  }
+  function getChallengeBest(idx) { return challenge.best[String(idx)] || null; }
+
+  // ===== 每日挑战存档（v1.10）=====
+  // 只保存"当天"的成绩；读取时若日期已变（跨日）会自动重置，无需定时器。
+  let daily = { date: '', cleared: false, bestScore: 0, bestWave: 0 };
+  let dailyCache = null;                     // { key, level }：同一日期内复用同一关卡对象
+  function dailyKeyOf(now) {
+    const d = (now instanceof Date) ? now : new Date();
+    const m = d.getMonth() + 1, day = d.getDate();
+    return String(d.getFullYear()) + (m < 10 ? '0' + m : m) + (day < 10 ? '0' + day : day);
+  }
+  function getDailyKey() {
+    try { return dailyKeyOf(new Date()); } catch (e) { return '00000000'; }
+  }
+  function loadDaily() {
+    let raw = null;
+    try { raw = localStorage.getItem(DAILY_KEY); } catch (e) { setWarning('每日挑战存档读取失败：本地存储不可用'); }
+    daily = { date: '', cleared: false, bestScore: 0, bestWave: 0 };
+    if (raw) {
+      let obj = null;
+      try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+      if (!obj || typeof obj !== 'object') {
+        setWarning('每日挑战存档已损坏，已回退为空进度');
+      } else if (String(obj.date || '') === getDailyKey()) {
+        daily = {
+          date: String(obj.date),
+          cleared: !!obj.cleared,
+          bestScore: Math.max(0, Math.round(Number(obj.bestScore) || 0)),
+          bestWave: Math.max(0, Math.round(Number(obj.bestWave) || 0)),
+        };
+      }
+    }
+    return getDailyState();
+  }
+  function saveDaily() {
+    try { localStorage.setItem(DAILY_KEY, JSON.stringify(daily)); return true; }
+    catch (e) { setWarning('每日挑战保存失败：本地存储不可用或已满'); return false; }
+  }
+  function getDailyState() {
+    const key = getDailyKey();
+    const fresh = (daily.date !== key);
+    return {
+      key: key,
+      date: fresh ? key : daily.date,
+      cleared: fresh ? false : daily.cleared,
+      bestScore: fresh ? 0 : daily.bestScore,
+      bestWave: fresh ? 0 : daily.bestWave,
+      level: getDailyLevel(),
+    };
+  }
+  // 当天的确定性关卡（由 levels-campaign.js 的 makeDailyChallenge 生成；同一天复用同一对象）
+  function getDailyLevel() {
+    const key = getDailyKey();
+    if (dailyCache && dailyCache.key === key) return dailyCache.level;
+    const maker = (typeof window !== 'undefined' && typeof window.makeDailyChallenge === 'function')
+      ? window.makeDailyChallenge : null;
+    let level = null;
+    if (maker) {
+      try { level = maker(key); } catch (e) { level = null; }
+    }
+    if (!level) setWarning('每日挑战关卡生成失败');
+    dailyCache = { key: key, level: level };
+    return level;
+  }
+  function recordDaily() {
+    const key = getDailyKey();
+    if (daily.date !== key) daily = { date: key, cleared: false, bestScore: 0, bestWave: 0 };
+    const score = integerScore();
+    const won = state.endReason === 'win';
+    const newBest = { score: score > daily.bestScore, wave: state.wave > daily.bestWave };
+    daily.bestScore = Math.max(daily.bestScore, score);
+    daily.bestWave = Math.max(daily.bestWave, state.wave);
+    daily.cleared = daily.cleared || won;
+    saveDaily();
+    return { state: getDailyState(), newBest: newBest };
+  }
+
   // ===== 星体回收与就地升级（P1-B）=====
   // 与「撤销」的语义边界：撤销＝放置后 5 游戏秒内、全额返还、自动失效（纠错）；
   // 回收＝任意时刻、返还 70%、有代价（战术腾挪）。两者互不改写对方的数组与存档。
@@ -489,6 +847,7 @@
   }
   function recycleBody(body) {
     if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法回收' };
+    if (hasModifier('noRecycle')) return { ok: false, reason: '本关禁止回收' };
     const idx = state.bodies.indexOf(body);
     if (idx < 0) return { ok: false, reason: '该星体已不在场上' };
     if (!physics.isPickable(body)) return { ok: false, reason: '该天体不可回收' };
@@ -506,6 +865,7 @@
   }
   function upgradeBody(body) {
     if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法升级' };
+    if (hasModifier('noRecycle')) return { ok: false, reason: '本关禁止升级' };
     if (state.bodies.indexOf(body) < 0) return { ok: false, reason: '该星体已不在场上' };
     const curKey = placedTypeKeyOf(body);
     if (!curKey) return { ok: false, reason: body && body.type === 'blackhole' ? '黑洞不可升级' : '该天体不可升级' };
@@ -661,6 +1021,15 @@
     pendingAchievements = [];
     state.lastStars = 0;
     state.selectedBody = null;
+    // v1.10：挑战 / 每日挑战 / 额外任务 / 最佳记录 一并复位（存档已删除，内存不复位会与存档不一致）
+    challenge = { unlocked: 0, stars: Object.create(null), best: Object.create(null) };
+    daily = { date: '', cleared: false, bestScore: 0, bestWave: 0 };
+    tasksDone = Object.create(null);
+    recordsByKey = Object.create(null);
+    state.lastTask = null;
+    state.lastRecord = null;
+    state.lastDaily = null;
+    state.modifiers = [];
     // 重新加载菜单时由调用方负责刷新显示
   }
   // 整数化总分：由四类计分明细（各自取整）代数求和推导，保证与结算面板明细严格一致、
@@ -678,6 +1047,10 @@
     if (state.mode === 'campaign') {
       // 闯关模式的「成就」= 已通关到第几关（最高解锁索引 + 1），不记录波次
       // 仅在通关时由 unlockNextLevel() 推进 campaignUnlocked
+    } else if (isFixedWaveMode()) {
+      // 挑战 / 每日挑战：成绩记录在各自的存档里（recordChallengeRun / recordDaily），
+      // 不得写入 survival/endless 共用的 bestScore / bestWaves，否则记录会互相污染
+      return;
     } else {
       const rounded = integerScore();
       if (rounded > bestScore) bestScore = rounded;
@@ -697,18 +1070,34 @@
   }
   function bestDisplay() {
     if (state.mode === 'campaign') return campaignUnlocked > 0 ? ('通关第 ' + campaignUnlocked + ' 关') : '未通关';
+    if (state.mode === 'challenge') {
+      return challenge.unlocked > 0 ? ('挑战已通关 ' + challenge.unlocked + ' 关') : '未通关';
+    }
+    if (state.mode === 'daily') {
+      const d = getDailyState();
+      if (d.cleared) return '今日已通关';
+      return d.bestScore > 0 ? ('今日 ' + d.bestScore + ' 分') : '今日未挑战';
+    }
     if (state.mode === 'endless') return bestWaves > 0 ? ('最高 ' + bestWaves + ' 波') : '—';
     return bestScore > 0 ? String(Math.round(bestScore)) : '—';
   }
   function bestForMode(mode) {
     if (mode === 'campaign') return campaignUnlocked;
+    if (mode === 'challenge') return challenge.unlocked;
+    if (mode === 'daily') return getDailyState().bestScore;   // 本机记录：当日最高分
     if (mode === 'endless') return bestWaves;
     return Math.round(bestScore);
   }
   // 关卡是否解锁（闯关模式：索引 <= 已解锁上限）
+  // 第四章（idx >= 30，新增内容）额外要求累计星星达标——用于承接"满星解锁新内容"的目标感。
+  // 前 30 关只按通关进度判定，逐位不变（不做进度倒退）。
   function isLevelUnlocked(idx) {
-    return idx <= campaignUnlocked;
+    const i = parseInt(idx, 10) || 0;
+    if (i > campaignUnlocked) return false;
+    if (i < CH4_START) return true;
+    return getTotalStars() >= CH4_STAR_GATE;
   }
+  function getCh4StarGate() { return CH4_STAR_GATE; }
 
   // ===== 关卡初始化 =====
   function setupLevel() {
@@ -742,10 +1131,24 @@
     state.spawnAccumulator = 0;
     state.healthFlash = 0;
 
+    // 挑战修饰符（v1.10）：本局生效的规则变体。
+    //   闯关 = 无修饰；挑战 = 按关卡序号确定性挂载；每日挑战 = 由当日关卡自带（见 makeDailyChallenge）。
+    state.modifiers = (lvl && Array.isArray(lvl.modifiers))
+      ? lvl.modifiers.slice()
+      : (state.mode === 'challenge' ? challengeModifiersFor(state.levelIndex) : []);
+    state.blackholesPlaced = 0;
+    // isLastWave 必须显式复位：它只在 startWave 里被写入，跨局残留会让新模式/异常路径误判终局
+    state.isLastWave = false;
+    // 天体上限告警只记一次：跨局不复位会吞掉后续告警（排查困难）
+    state.spawnBlockedLogged = false;
+    state.lastTask = null;
+    state.lastRecord = null;
+    state.lastDaily = null;
+
     // 减速额度 / 撤销历史 / 预警列表（P0-1 / P0-2 / P0-3）：每局从零开始。
     // 注意：timeScale 属会话级偏好，开局不重置（由额度耗尽机制兜底），
     // 避免与「直写 state.timeScale」的既有行为分叉。
-    state.slowQuota = SLOW_QUOTA_MAX;
+    state.slowQuota = hasModifier('noSlow') ? 0 : SLOW_QUOTA_MAX;
     state.gameTime = 0;
     state.placeHistory = [];
     state.threatWarnings = [];
@@ -756,15 +1159,22 @@
     state.recycles = 0;
     state.blackholeSwallowed = 0;
     state.lastStars = 0;
-    // 道具配额（P2）：闯关按关卡发放（2/1/1）；生存与无尽开局 1/1/1，之后每清 5 波补 1
-    state.props = state.mode === 'campaign'
-      ? { gravityWell: 2, repulseWave: 1, stasis: 1 }
-      : { gravityWell: 1, repulseWave: 1, stasis: 1 };
+    // 道具配额（P2）：固定波次模式（闯关/挑战/每日）按关卡发放（2/1/1）；
+    // 生存与无尽开局 1/1/1，之后每清 5 波补 1。「禁道具」修饰符下全部清零。
+    state.props = hasModifier('noProps')
+      ? { gravityWell: 0, repulseWave: 0, stasis: 0 }
+      : (isFixedWaveMode()
+          ? { gravityWell: 2, repulseWave: 1, stasis: 1 }
+          : { gravityWell: 1, repulseWave: 1, stasis: 1 });
     state.propsUsed = 0;
     state.stasisTime = 0;
 
     state.health = lvl.health;
-    state.budget = lvl.budget;
+    // 「星能减半」修饰符：初始星能 ×0.5（四舍五入，保证是整数星能）
+    state.budget = hasModifier('halfBudget') ? Math.round(lvl.budget * 0.5) : lvl.budget;
+    // 记录**生效后**的初始星能：额外任务 thrifty（结余 ≥ 初始预算的一半）与关卡卡片展示
+    // 都以此为准，避免"文案说一半、实际按未减半的预算判定"的不一致。
+    state.initialBudget = state.budget;
 
     // 限时（生存模式）
     state.duration = lvl.duration || 0;
@@ -856,6 +1266,10 @@
 
   function placeStar(typeKey, p, opts) {
     const def = STAR_TYPES[typeKey] || STAR_TYPES.mid;
+    // 修饰符（v1.10）：「禁黑洞」在扣星能之前拦截，避免出现"扣了钱又拒绝"的记账矛盾
+    if (typeKey === 'blackhole' && hasModifier('noBlackhole')) {
+      return { ok: false, reason: '本关禁用黑洞' };
+    }
     // 数量上限优先于星能判断：物理与预测均为 O(N²)，无上限会随放置数增长而卡死页面
     if (countPlacedBodies() >= MAX_PLACED_BODIES) {
       return { ok: false, reason: '场上星体已达上限 ' + MAX_PLACED_BODIES };
@@ -888,6 +1302,7 @@
     }
     state.bodies.push(body);
     state.starsPlaced++;
+    if (isBH) state.blackholesPlaced++;                   // v1.10：任务 noBlackhole 判定用
     recordPlacement(body, typeKey, def.cost);             // 记入撤销历史（P0-2）
     return { ok: true };
   }
@@ -1059,6 +1474,10 @@
       radius = kind === 'comet' ? 7 : (13 + difficulty * 6);
     }
 
+    // 「来袭加速」修饰符（v1.10）：速度 ×1.5。放在方向/速度换算之前，
+    // 保证生成方向与预测线读到的都是同一个 speed（预测一致性）。
+    if (hasModifier('fastThreats')) speed *= 1.5;
+
     // 出屏幕外的生成点（各边外扩 margin）
     const margin = 60;
     let x, y;
@@ -1178,7 +1597,7 @@
     state.slowQuota = Math.min(SLOW_QUOTA_MAX, state.slowQuota + SLOW_REFUND_PER_WAVE);
     // 道具补给（P2）：生存/无尽每清 5 波补 1 个（按 引力脉冲→斥力波→凝滞 轮转），
     // 闯关按关卡发放固定配额，不额外补给，保持"资源稀缺"的紧张感。
-    if (state.mode !== 'campaign' && state.wave % 5 === 0) {
+    if (!isFixedWaveMode() && state.wave % 5 === 0) {
       const ids = ['gravityWell', 'repulseWave', 'stasis'];
       const id = ids[((state.wave / 5) - 1) % ids.length];
       if (state.props && Number.isFinite(state.props[id])) {
@@ -1193,6 +1612,11 @@
   function toggleSlowMotion() {
     if (!state.gameStarted || state.gameOver) {
       return { ok: false, timeScale: state.timeScale, reason: '当前无法切换时间' };
+    }
+    // 修饰符（v1.10）：「禁减速」本局完全没有慢动作（额度也在 setupLevel 里清零）
+    if (hasModifier('noSlow')) {
+      pushNotice('本关禁用时间减速');
+      return { ok: false, timeScale: 1, reason: '本关禁用减速' };
     }
     if (state.timeScale === 1) {
       if (state.slowQuota <= 0) {
@@ -1214,6 +1638,7 @@
       ratio: max > 0 ? quota / max : 0,
       low: quota / max <= SLOW_LOW_RATIO,
       exhausted: quota <= 0,
+      disabled: hasModifier('noSlow'),   // v1.10：本关禁用减速（UI 显示"禁用"而非"已耗尽"）
     };
   }
 
@@ -1358,10 +1783,18 @@
     if (state.gameOver) return;
     state.gameOver = true;
     state.endReason = reason || 'defeat';    // 'defeat' | 'timeup' | 'win'
-    // 通关当前关：解锁下一关（闯关模式成就推进）
-    if (state.endReason === 'win') unlockNextLevel();
-    // 星级评价（P1-A）：仅闯关通关计星，且只增不减
-    if (state.mode === 'campaign') recordRunStars();
+    // 通关当前关：解锁下一关（闯关/挑战各自独立推进）
+    if (state.endReason === 'win') {
+      unlockNextLevel();
+      unlockNextChallenge();
+    }
+    // 星级评价（P1-A）：闯关与挑战通关计星，各自独立存档，只增不减
+    if (state.mode === 'campaign' || state.mode === 'challenge') recordRunStars();
+    // v1.10：额外任务（只判不罚）与最佳记录，均在结算面板渲染前算好
+    state.lastTask = recordRunTask();
+    state.lastRecord = recordRun();
+    if (state.mode === 'challenge') recordChallengeRun();
+    if (state.mode === 'daily') state.lastDaily = recordDaily();
     // 成就判定（P1-C）：必须放在星级写入之后——star_30/star_60/star_all 依赖最新总星数
     evaluateAchievements();
     // 结算时清空选中态（操作面板由 input 层同步隐藏）
@@ -1503,8 +1936,8 @@
       ).length;
       if (remaining === 0) {
         clearWave();
-        // 闯关模式：最后一波清空即通关胜利
-        if (state.mode === 'campaign' && state.isLastWave) {
+        // 固定波次模式（闯关/挑战/每日）：最后一波清空即通关胜利
+        if (isFixedWaveMode() && state.isLastWave) {
           endGame('win');
         }
       }
@@ -1692,9 +2125,9 @@
     const set = setText;
     set('budgetVal', Math.round(state.budget));
     const waveGroup = document.getElementById('waveGroup');
-    if (waveGroup) waveGroup.style.display = state.mode === 'campaign' ? '' : 'none';
-    // 闯关模式常驻显示「当前波/总波」，便于了解剩余波数
-    if (state.mode === 'campaign' && state.level && Array.isArray(state.level.waves)) {
+    if (waveGroup) waveGroup.style.display = isFixedWaveMode() ? '' : 'none';
+    // 固定波次模式常驻显示「当前波/总波」，便于了解剩余波数
+    if (isFixedWaveMode() && state.level && Array.isArray(state.level.waves)) {
       set('waveVal', state.wave + '/' + state.level.waves.length);
     } else {
       set('waveVal', state.wave);
@@ -1712,9 +2145,9 @@
         timeGroup.style.display = 'none';
       }
     }
-    set('modeTag', state.mode === 'campaign'
-      ? `闯关·${state.level.name}`
-      : `生存·${state.level.name}`);
+    // 模式标签：新增挑战/每日/无尽分支（此前只有闯关/其它两支，新模式会显示成"生存·…"）
+    const MODE_TAG = { campaign: '闯关', challenge: '挑战', daily: '每日', endless: '无尽', survival: '生存' };
+    set('modeTag', (MODE_TAG[state.mode] || '生存') + '·' + state.level.name);
     const healthFill = document.getElementById('healthFill');
     if (healthFill) {
       const pct = clamp(state.health / (state.level.health || 1), 0, 1) * 100;
@@ -1739,9 +2172,61 @@
 
   // ===== 关卡选择 API =====
   function getLevelsForMode(mode) {
-    if (mode === 'campaign') return CAMPAIGN_LEVELS;
+    if (mode === 'campaign' || mode === 'challenge') return CAMPAIGN_LEVELS;
+    if (mode === 'daily') {
+      const lvl = getDailyLevel();
+      return lvl ? [lvl] : [];
+    }
     if (mode === 'endless') return [ENDLESS_LEVEL];
     return SURVIVAL_LEVELS;
+  }
+
+  // ===== 下一波来袭预告（v1.10，只读信息）=====
+  // 索引口径与 HUD 的「当前波/总波」完全一致：state.wave 表示"已开始的波数"，
+  // 因此 waves[state.wave] 就是下一波（波已清、下一波未开始的间隙里 state.wave 不变，预告不跳变）。
+  // 生存/无尽没有预定义波次 → available=false（UI 隐藏该项）。
+  function getWavePreview() {
+    const lvl = state.level;
+    const empty = { available: false, waveNo: 0, total: 0, boss: false, counts: [], sides: [], label: '' };
+    if (!isFixedWaveMode() || !lvl || !Array.isArray(lvl.waves)) return empty;
+    const total = lvl.waves.length;
+    const idx = state.wave;
+    if (idx >= total) {
+      return { available: false, waveNo: total, total: total, boss: false, counts: [], sides: [], label: '最终波进行中' };
+    }
+    const wv = lvl.waves[idx] || { spawns: [] };
+    const spawns = Array.isArray(wv.spawns) ? wv.spawns : [];
+    const counts = Object.create(null);
+    let left = 0, right = 0, other = 0;
+    for (let i = 0; i < spawns.length; i++) {
+      const s = spawns[i];
+      const kind = s.kind || 'asteroid';
+      counts[kind] = (counts[kind] || 0) + 1;
+      const e = normalizeEdge(s.edge);
+      if (e === 1) right++;
+      else if (e === 3) left++;
+      else if (e !== null) other++;
+    }
+    const NAMES = { asteroid: '陨石', comet: '彗星', splitter: '分裂彗星', disturber: '干扰体', boss: 'BOSS' };
+    const ORDER = ['asteroid', 'comet', 'splitter', 'disturber', 'boss'];
+    const list = [];
+    for (let i = 0; i < ORDER.length; i++) {
+      const k = ORDER[i];
+      if (counts[k]) list.push({ kind: k, name: NAMES[k] || k, count: counts[k] });
+    }
+    const sides = [];
+    if (left) sides.push('左');
+    if (right) sides.push('右');
+    if (!left && !right && other) sides.push('上下');
+    return {
+      available: true,
+      waveNo: idx + 1,
+      total: total,
+      boss: !!wv.boss || list.some(c => c.kind === 'boss'),
+      counts: list,
+      sides: sides,
+      label: list.map(c => c.name + ' ×' + c.count).join(' · '),
+    };
   }
 
   // ===== 开始游戏 =====
@@ -1752,8 +2237,11 @@
     stepAccumulator = 0;        // 丢弃上一局残留的时间片
     state.mode = o.mode || 'survival';
     state.levelIndex = o.levelIndex || 0;
-    // 闯关模式解锁校验：仅允许已解锁的关卡
+    // 解锁校验：闯关按通关进度（第四章另加累计星星门槛）；挑战模式有独立的挑战进度
     if (state.mode === 'campaign' && !isLevelUnlocked(state.levelIndex)) {
+      return false;
+    }
+    if (state.mode === 'challenge' && !isChallengeUnlocked(state.levelIndex)) {
       return false;
     }
     const levels = getLevelsForMode(state.mode);
@@ -1787,9 +2275,19 @@
       const lvl = state.level;
       const goal = lvl.objective || lvl.desc || '';
       const fail = lvl.failCondition || '';
+      // 章首关叠加一句剧情文案（极简叙事，纯文本；每日挑战不套用闯关章节的剧情）
+      let story = '';
+      if (state.mode === 'campaign' || state.mode === 'challenge') {
+        const ch = (CHAPTERS || []).filter(c => c.from === state.levelIndex && c.story)[0];
+        if (ch) story = ch.story;
+      }
+      // 额外任务提示（只判不罚的附加目标）
+      const task = lvl.task ? lvl.task.text : '';
       banner.innerHTML =
         `<div class="lb-name">${lvl.name}</div>` +
+        (story ? `<div class="lb-story">${story}</div>` : '') +
         `<div class="lb-goal">🎯 目标：${goal}</div>` +
+        (task ? `<div class="lb-task">✦ 额外任务：${task}</div>` : '') +
         (fail ? `<div class="lb-fail">⚠️ 失败：${fail}</div>` : '');
       banner.classList.add('show');
       clearTimeout(banner._t);
@@ -1844,7 +2342,7 @@
       mode: state.mode,
       levelName: state.level ? state.level.name : '',
       wave: state.wave,
-      totalWaves: (state.mode === 'campaign' && state.level && Array.isArray(state.level.waves)) ? state.level.waves.length : null,
+      totalWaves: (isFixedWaveMode() && state.level && Array.isArray(state.level.waves)) ? state.level.waves.length : null,
       score: integerScore(),
       cleared: state.asteroidsCleared,
       spent: state.totalSpent,
@@ -1873,6 +2371,18 @@
       budgetLeft: Math.round(state.budget),
       stars: state.lastStars,
       totalStars: getTotalStars(),
+      // v1.10 扩展字段（同样只增不改）：模式扩展、额外任务判定与结算展示共用
+      // levelBudget = 本局**生效后**的初始星能（已计入「星能减半」等修饰符）
+      levelBudget: (Number.isFinite(state.initialBudget) && state.initialBudget > 0)
+        ? state.initialBudget
+        : ((state.level && Number.isFinite(state.level.budget)) ? state.level.budget : 0),
+      blackholesPlaced: state.blackholesPlaced,
+      gameTime: Math.round(state.gameTime),          // 本局游戏时钟（秒），结算"用时"口径
+      modifiers: Array.isArray(state.modifiers) ? state.modifiers.slice() : [],
+      taskId: (state.level && state.level.task) ? state.level.task.id : '',
+      taskText: (state.level && state.level.task) ? state.level.task.text : '',
+      challengeStars: getChallengeStarsTotal(),
+      tasksDone: getTasksDoneCount(),
     };
   }
 
@@ -1925,6 +2435,28 @@
     // P2 一次性道具
     getProps,
     useProp,
+    // v1.10 模式 / 修饰符 / 任务 / 记录 / 挑战 / 每日挑战
+    isFixedWaveMode,
+    MODIFIERS,
+    challengeModifiersFor,
+    getActiveModifiers,
+    hasModifier,
+    isTaskDone,
+    getTasksDoneCount,
+    TASK_CHECKS,
+    getRecord,
+    loadRecords,
+    loadChallenge,
+    getChallengeUnlocked,
+    isChallengeUnlocked,
+    challengeStarsForLevel,
+    getChallengeStarsTotal,
+    getChallengeBest,
+    loadDaily,
+    getDailyState,
+    getDailyLevel,
+    getWavePreview,
+    getCh4StarGate,
     // P1-C 成就
     loadAchievements,
     saveAchievements,
@@ -1952,4 +2484,9 @@
   // 星级迁移依赖 campaignUnlocked，必须放在 loadBest() 之后
   loadStars();
   loadAchievements();
+  // v1.10：挑战进度 / 额外任务 / 最佳记录 / 每日挑战（每日按日期自动判定是否跨日）
+  loadChallenge();
+  loadTasks();
+  loadRecords();
+  loadDaily();
 })();

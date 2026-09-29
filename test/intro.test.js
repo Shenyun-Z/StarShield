@@ -47,7 +47,9 @@ load('js/input.js');   // init 会调用 renderLevelCards（默认 survival 模�
 
 // 1. 关卡配置确定性：intro 字段完整且描述为字符串
 const levels = game.getLevelsForMode('campaign');
-assert('30 关每关均有 intro 简介', levels.every(l => typeof l.intro === 'string' && l.intro.length > 0));
+assert('40 关每关均有 intro 简介', levels.every(l => typeof l.intro === 'string' && l.intro.length > 0));
+assert('每关均有额外任务定义（id + 文案）',
+  levels.every(l => l.task && typeof l.task.id === 'string' && typeof l.task.text === 'string' && l.task.text.length > 4));
 assert('intro 为确定性文案（无随机标记）', levels.every(l => l.intro.length > 5));
 
 // 2. 渲染出的第一张关卡卡片包含简介文案（input.js renderLevelCards → createElement innerHTML）

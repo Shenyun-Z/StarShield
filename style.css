@@ -596,6 +596,110 @@ html, body {
 }
 .prop-opt:disabled { opacity: 0.35; cursor: not-allowed; }
 
+/* ================= v1.10：内容扩展相关样式 ================= */
+
+/* ---------- HUD：下一波来袭预告胶囊 ---------- */
+.preview-group {
+  padding: 3px 10px;
+  border: 1px solid rgba(120,160,255,0.28);
+  border-radius: 999px;
+  background: rgba(16,26,48,0.55);
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.preview-group.boss {
+  border-color: rgba(255,90,90,0.7);
+  background: rgba(50,18,24,0.7);
+  box-shadow: 0 0 14px rgba(255,80,90,0.22);
+}
+.preview-group.boss .hud-label { color: #ff9a8f; }
+.wp-body { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wp-item { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #dbe8ff; }
+.wp-dot { width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+.wp-dot.asteroid { background: #8fb6ff; color: #8fb6ff; }
+.wp-dot.comet { background: #ffd166; color: #ffd166; }
+.wp-dot.splitter { background: #c89bff; color: #c89bff; }
+.wp-dot.disturber { background: #6fe39b; color: #6fe39b; }
+.wp-dot.boss { background: #ff5a5a; color: #ff5a5a; }
+.wp-side { font-size: 11px; color: #93a7cf; }
+.wp-total { font-size: 11px; color: #6f86b3; }
+
+/* ---------- 关卡卡片：修饰符标签 / 任务徽章 / 最佳记录 ---------- */
+.lc-mods { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 4px; }
+.mod-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #ffb27a;
+  background: rgba(255,178,122,0.12);
+  border: 1px solid rgba(255,178,122,0.35);
+}
+.lc-task {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #93a7cf;
+  border-left: 2px solid rgba(255,226,138,0.35);
+  padding-left: 6px;
+}
+.lc-task.done { color: #ffd98a; border-left-color: #ffe28a; }
+.lc-record {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #8fb6ff;
+  font-variant-numeric: tabular-nums;
+}
+.mc-desc #dailyBest { color: #ffd98a; font-weight: 600; }
+
+/* ---------- 结算面板：额外任务 / 纪录对比 ---------- */
+.result-task,
+.result-record {
+  margin: 8px 0 2px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+  border: 1px solid rgba(120,160,255,0.22);
+  background: rgba(255,255,255,0.04);
+  color: #a8b6d9;
+}
+.result-task.done {
+  color: #ffd98a;
+  border-color: rgba(255,226,138,0.45);
+  background: linear-gradient(90deg, rgba(255,226,138,0.12), rgba(255,255,255,0.03));
+}
+.result-record { color: #8fb6ff; font-variant-numeric: tabular-nums; }
+.result-record.new {
+  color: #ffe28a;
+  border-color: rgba(255,226,138,0.5);
+  box-shadow: 0 0 14px rgba(255,226,138,0.12);
+  animation: recPop .42s ease-out;
+}
+@keyframes recPop {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- 开局横幅：章节剧情 / 额外任务 ---------- */
+#levelBanner .lb-story {
+  display: block;
+  max-width: 640px;
+  margin: 6px auto 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #93a7cf;
+}
+#levelBanner .lb-task {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #ffd98a;
+  background: rgba(40,34,16,0.82);
+  border: 1px solid rgba(255,226,138,0.35);
+  border-radius: 999px;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 520px) {
   .hud { font-size: 12px; gap: 10px; padding: 8px 10px; }
@@ -605,4 +709,8 @@ html, body {
   .start-btn { padding: 12px 28px; font-size: 16px; }
   .result-card { padding: 22px 18px; min-width: 0; }
   .result-stats { grid-template-columns: 1fr; }
+  /* 窄屏：预告胶囊允许换行到第二行，不产生横向溢出 */
+  .preview-group { flex-wrap: wrap; }
+  .wp-body { gap: 6px; }
+  #levelBanner .lb-story { padding: 0 12px; }
 }

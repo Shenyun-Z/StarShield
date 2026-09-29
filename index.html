@@ -38,6 +38,11 @@
         <span class="hud-label">最佳</span>
         <span id="bestVal">—</span>
       </div>
+      <!-- 下一波来袭预告（v1.10）：构成 + 来向，Boss 波整条转红 -->
+      <div class="hud-group preview-group" id="wavePreview" style="display:none">
+        <span class="hud-label">下一波</span>
+        <span id="wavePreviewBody" class="wp-body"></span>
+      </div>
     </div>
 
     <!-- Boss 分段血条：出现 Boss 时显示（默认隐藏） -->
@@ -111,6 +116,11 @@
           <div><span class="rs-label">星能花费</span><span id="rsSpent">0</span></div>
         </div>
 
+        <!-- 每关额外任务结果（v1.10，只判不罚） -->
+        <div id="resultTask" class="result-task" style="display:none"></div>
+        <!-- 本关最佳记录对比（v1.10，新纪录高亮） -->
+        <div id="resultRecord" class="result-record" style="display:none"></div>
+
         <!-- 计分规则与明细 -->
         <div class="score-breakdown">
           <div class="sd-head">
@@ -173,6 +183,14 @@
           <button class="mode-card" data-mode="endless">
             <div class="mc-name">无尽模式</div>
             <div class="mc-desc">无限波次 · 比拼最高波数<br>难度封顶后仍缓慢上升，看你能守到第几波</div>
+          </button>
+          <button class="mode-card" data-mode="challenge">
+            <div class="mc-name">挑战模式</div>
+            <div class="mc-desc">40 关 + 递增修饰符 · 独立进度<br>禁道具 / 星能减半 / 来袭加速，闯关的进阶版</div>
+          </button>
+          <button class="mode-card" data-mode="daily">
+            <div class="mc-name">每日挑战</div>
+            <div class="mc-desc">每日一变 · 比拼当日最高分<br><span id="dailyBest">今日未挑战</span></div>
           </button>
         </div>
       </div>

@@ -20,7 +20,7 @@ const a = loadLevels();
 const b = loadLevels();
 const c = loadLevels();
 
-assert('配置加载为 30 个关卡', a.length === 30, 'len=' + a.length);
+assert('配置加载为 40 个关卡（前 30 关 + 第四章 10 关）', a.length === 40, 'len=' + a.length);
 assert('三次加载关卡数量一致', a.length === b.length && b.length === c.length);
 
 function deepEqual(x, y) {
@@ -40,7 +40,7 @@ function deepEqual(x, y) {
 assert('加载 A 与 B 完全一致（确定性）', deepEqual(a, b));
 assert('加载 A 与 C 完全一致（确定性）', deepEqual(a, c));
 
-// 规模检查：30 关 × 8~22 波 × 每波 3~12 个威胁 ≈ 数千个威胁单位
+// 规模检查：40 关 × 9~30 波 × 每波 4~14 个威胁 ≈ 数千个威胁单位
 let totalSpawns = 0;
 a.forEach(lv => { totalSpawns += lv.waves.reduce((s, w) => s + w.spawns.length, 0); });
 assert('威胁配置总数 >= 1000', totalSpawns >= 1000, 'total=' + totalSpawns);
