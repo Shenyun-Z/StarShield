@@ -170,29 +170,104 @@
     }));
   }
 
+  // ===== 控制条状态同步（P0-1 / P0-2 / P0-3）=====
+  // 主循环每帧调用：全部带脏检查（textContent / classList 写入都会触发样式重算）。
+  const uiCache = Object.create(null);
+  const uiEls = Object.create(null);
+  function ui(id) {
+    if (!uiEls[id]) uiEls[id] = document.getElementById(id);
+    return uiEls[id];
+  }
+  function setBtnText(btn, txt) {
+    if (!btn) return;
+    if (btn.textContent === txt) return;
+    btn.textContent = txt;
+  }
+  function setBtnClass(btn, name, on, cacheKey) {
+    if (!btn || !btn.classList) return;
+    if (uiCache[cacheKey] === on) return;
+    uiCache[cacheKey] = on;
+    if (on) btn.classList.add(name); else btn.classList.remove(name);
+  }
+  function syncControlButtons() {
+    const st = game.state;
+    // 减速额度（P0-1）：正常态显示剩余秒数、减速中显示小数、低额度转琥珀、耗尽提示
+    const slowBtn = ui('slowBtn');
+    if (slowBtn && typeof game.slowMotionState === 'function') {
+      const sm = game.slowMotionState();
+      const slowed = st.timeScale < 1;
+      const txt = sm.exhausted
+        ? '时间：正常 · 已耗尽'
+        : (slowed ? '时间：减速 · ' + sm.quota.toFixed(1) + 's'
+                  : '时间：正常 · ' + Math.ceil(sm.quota) + 's');
+      setBtnText(slowBtn, txt);
+      setBtnClass(slowBtn, 'low', sm.low && !sm.exhausted, 'slowLow');
+      setBtnClass(slowBtn, 'exhausted', sm.exhausted, 'slowExhausted');
+    }
+    // 撤销（P0-2）：无可用历史时置灰
+    const undoBtn = ui('undoBtn');
+    if (undoBtn && typeof game.canUndo === 'function') {
+      const can = game.canUndo();
+      const dis = !can.ok;
+      if (uiCache.undoDisabled !== dis) {
+        uiCache.undoDisabled = dis;
+        undoBtn.disabled = dis;
+      }
+    }
+    // 预警（P0-3）/ 预测线（P0-4 持久化）：开关态写回按钮
+    const warnBtn = ui('warnBtn');
+    setBtnText(warnBtn, '预警：' + (st.showWarnings ? '开' : '关'));
+    setBtnClass(warnBtn, 'on', !!st.showWarnings, 'warnOn');
+    setBtnText(ui('hintBtn'), '预测：' + (st.showHint ? '开' : '关'));
+  }
+  // 撤销最近放置：成功/失败都给轻提示（P0-2）
+  function doUndo() {
+    const st = game.state;
+    if (!st.gameStarted || st.gameOver) return;
+    const r = game.undoLastPlacement();
+    if (r && r.ok) flashMessage('已撤销放置，返还 ' + r.refund + ' 星能');
+    else flashMessage((r && r.reason) || '无法撤销');
+    syncControlButtons();
+  }
+
   // ===== 控制按钮 =====
   function bindControls() {
     const slowBtn = document.getElementById('slowBtn');
+    const undoBtn = document.getElementById('undoBtn');
+    const warnBtn = document.getElementById('warnBtn');
     const audioBtn = document.getElementById('audioBtn');
     const hintBtn = document.getElementById('hintBtn');
     const restartBtn = document.getElementById('restartBtn');
     const menuBtn = document.getElementById('menuBtn');
     const clearBtn = document.getElementById('clearBtn');
 
+    // 时间减速（P0-1）：唯一入口是 game.toggleSlowMotion()，由 game 判定额度；
+    // input 不再直接写 state.timeScale（避免出现"额度未扣、倍率已变"的分叉）。
     slowBtn.addEventListener('click', () => {
-      const s = game.state;
-      s.timeScale = (s.timeScale === 1) ? 0.25 : 1;
-      slowBtn.textContent = '时间：' + (s.timeScale === 1 ? '正常' : '减速');
+      const r = game.toggleSlowMotion();
+      if (r && !r.ok && r.reason) flashMessage(r.reason);
+      syncControlButtons();
     });
+    // 撤销最近放置（P0-2）
+    if (undoBtn) undoBtn.addEventListener('click', doUndo);
+    // 撞母星预警开关（P0-3）：与提示线独立，状态持久化（P0-4）
+    if (warnBtn) {
+      warnBtn.addEventListener('click', () => {
+        const next = !game.state.showWarnings;
+        game.setSetting('showWarnings', next);
+        syncControlButtons();
+        flashMessage(next ? '撞母星预警：开' : '撞母星预警：关');
+      });
+    }
     audioBtn.addEventListener('click', () => {
       const on = !audio.isEnabled();
       audio.setEnabled(on);
       audioBtn.textContent = '音效：' + (on ? '开' : '关');
     });
+    // 预测线开关：状态持久化（P0-4）
     hintBtn.addEventListener('click', () => {
-      const s = game.state;
-      s.showHint = !s.showHint;
-      hintBtn.textContent = '预测：' + (s.showHint ? '开' : '关');
+      game.setSetting('showHint', !game.state.showHint);
+      syncControlButtons();
     });
     restartBtn.addEventListener('click', () => {
       if (restartBtn.dataset.armed === '1') {
@@ -563,6 +638,12 @@
       game.stepFrame(dtReal);
       render(canvas, game.state);
       game.updateHud();
+      // 控制条状态（减速额度 / 撤销可用性 / 开关态）+ 游戏内轻提示（P0-1 额度耗尽等）
+      syncControlButtons();
+      if (typeof game.takeNotice === 'function') {
+        const notice = game.takeNotice();
+        if (notice) flashMessage(notice);
+      }
       loopErrorStreak = 0;                 // 本帧正常 → 连续异常计数清零
     } catch (err) {
       loopErrorStreak++;
@@ -601,6 +682,11 @@
     bindControls();
     bindResultActions();
     bindMenuClear();
+    // Z 键撤销最近放置（P0-2）：与「撤销」按钮同源，避免两套判定逻辑
+    window.addEventListener('keydown', (e) => {
+      if (!e || !game.state.gameStarted || game.state.gameOver) return;
+      if (String(e.key || '').toLowerCase() === 'z') doUndo();
+    });
     canvas.addEventListener('pointerdown', pointerDown);
     window.addEventListener('pointermove', pointerMove);
     window.addEventListener('pointerup', pointerUp);

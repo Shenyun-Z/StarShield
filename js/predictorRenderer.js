@@ -117,14 +117,23 @@ const predictorRenderer = (function () {
     ctx.restore();
   }
 
-  // 统一预测：对当前系统里所有运动星体/陨石绘制三色轨迹（提示线）
-  // 优化：每帧只 simulateFuture 一次，避免 O(N²) 重复积分。
+  // 统一预测：对当前系统里所有运动星体/陨石绘制三色轨迹（提示线），
+  // 并顺带收集「未来 6 秒内将撞击母星」的威胁（撞母星预警 P0-3）。
+  // 性能红线：每帧只 simulateFuture 一次，提示线与预警共用这一次积分（严禁二次积分）。
   function renderTrajectories(state) {
+    // 预警列表本帧重算：先清空，避免关闭开关或天体消失后留下残影
+    if (!state.threatWarnings) state.threatWarnings = [];
+    else state.threatWarnings.length = 0;
+
     if (typeof predictor === 'undefined' || !predictor) return;
     if (!ready()) return;
     const planet = state.bodies[0];
     if (!planet) return;
     if (!state.bodies || state.bodies.length === 0) return;
+    const wantHint = !!state.showHint;
+    const wantWarn = !!state.showWarnings;
+    if (!wantHint && !wantWarn) return;        // 两者都关闭 → 完全不积分
+
     // 一次前向模拟，复用给所有运动天体
     const sim = predictor.simulateFuture(state.bodies, {
       duration: physics.PREDICT_DUR,   // 统一取物理常量（3 段 × 2s = 6s），避免与常量分叉
@@ -137,7 +146,16 @@ const predictorRenderer = (function () {
       if (b.type === 'planet') continue;
       if (b.x == null) continue;
       const risk = predictor.evaluateRisk(sim, i, planet);
-      drawPredictionLine(risk.path, risk, true, sim.sampleDt);
+      if (wantHint) drawPredictionLine(risk.path, risk, true, sim.sampleDt);
+      // 预警只针对来袭威胁（陨石/彗星）：玩家自己放置的星体即便撞上母星也不扣血（M6）
+      if (wantWarn && risk.hitMother && (b.type === 'asteroid' || b.type === 'comet')) {
+        state.threatWarnings.push({
+          x: b.x, y: b.y,
+          radius: b.radius || 8,
+          hitTime: Number.isFinite(risk.hitTime) ? risk.hitTime : 0,
+          id: i,
+        });
+      }
     }
   }
 

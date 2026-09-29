@@ -204,10 +204,12 @@
     // 引力场流线（绘制在背景之上、星体之下）
     drawField(ctx, state);
 
-    // 预测轨迹
-    if (state.showHint && state.gameStarted && !state.gameOver
+    // 预测轨迹 + 撞母星预警：两者由 predictorRenderer 内部那一次前向积分同时产出
+    if ((state.showHint || state.showWarnings) && state.gameStarted && !state.gameOver
         && typeof predictorRenderer !== 'undefined' && predictorRenderer) {
       predictorRenderer.renderTrajectories(state);
+    } else if (state.threatWarnings && state.threatWarnings.length) {
+      state.threatWarnings.length = 0;      // 关闭开关/结算后清空，避免残影
     }
 
     // 星体
@@ -278,6 +280,47 @@
           ctx.fill();
           // 力度数字（可选；保留简洁：注释掉以免抢眼）
         }
+      }
+    }
+
+    // 撞母星预警（P0-3）：红色脉动光环 + 撞击倒计时 + 连向母星的细红虚线。
+    // 画在星体之后，压在最上层；只读 state.threatWarnings（由 predictorRenderer 每帧写入），
+    // 不加任何额外积分。ctx 调用全部为独立方法（避免链式渐变，兼容降级上下文）。
+    if (state.showWarnings && state.gameStarted && !state.gameOver
+        && state.threatWarnings && state.threatWarnings.length) {
+      const planet = state.bodies[0];
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160);
+      for (const w of state.threatWarnings) {
+        const rr = (w.radius || 8) + 9 + pulse * 4;
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(255,59,59,' + (0.85 - pulse * 0.40).toFixed(2) + ')';
+        ctx.lineWidth = 1.6 + pulse * 1.4;
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, rr, 0, Math.PI * 2);
+        ctx.stroke();
+        if (planet && Number.isFinite(w.hitTime) && w.hitTime > 0) {
+          ctx.strokeStyle = 'rgba(255,59,59,0.32)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath();
+          ctx.moveTo(w.x, w.y);
+          ctx.lineTo(planet.x, planet.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 倒计时数字：等宽字体 + 深色描边，亮背景星体上依然清晰
+          const label = w.hitTime.toFixed(1) + 's';
+          const ly = w.y - rr - 3;
+          ctx.font = '600 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(5,7,13,0.85)';
+          ctx.strokeText(label, w.x, ly);
+          ctx.fillStyle = '#ff8a7a';
+          ctx.fillText(label, w.x, ly);
+        }
+        ctx.restore();
       }
     }
 

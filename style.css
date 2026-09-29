@@ -134,6 +134,24 @@ html, body {
   flex-wrap: wrap;
   z-index: 5;
 }
+/* 控制条按钮扩展态（P0-1 减速额度 / P0-2 撤销置灰 / P0-3 预警开启强调） */
+.ctrl:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.ctrl.low {
+  color: #ffb27a;
+  border-color: rgba(255,178,122,0.55);
+  box-shadow: 0 0 12px rgba(255,178,122,0.16);
+}
+.ctrl.on {
+  border-color: rgba(120,160,255,0.55);
+  box-shadow: inset 0 0 10px rgba(90,140,255,0.18);
+}
+.ctrl.exhausted {
+  opacity: 0.45;
+  color: #6f86b3;
+}
 .ctrl {
   pointer-events: auto;
   padding: 9px 16px;

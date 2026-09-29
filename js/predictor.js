@@ -10,7 +10,8 @@
  * 导出（全局命名空间 predictor.xxx）：
  *   predictor.simulateFuture(bodies, {duration, dt}) → {paths:[{x,y}...], bodies, sampleDt}
  *   predictor.evaluateRisk(sim, ownerIndex, star)
- *        → {level, path(已按碰撞点截断), endX, endY, captured, hitMother}
+ *        → {level, path(已按碰撞点截断), endX, endY, captured, hitMother, hitTime}
+ *      hitTime：预测撞上母星的时间(秒)，未命中为 0（撞母星预警用）
  *      sim 为 simulateFuture 的返回值；碰撞检测使用与预测线同一时刻、同步演化的
  *      其它天体未来位置（而非当前静止快照），修正在多运动天体下预测线判色失真的问题。
  */
@@ -174,7 +175,11 @@
       endX = e.x; endY = e.y;
     }
 
-    return { level: level, path: outPath, endX: endX, endY: endY, captured: captured, hitMother: hitMother };
+    // hitTime：预测撞上母星的游戏时刻（秒，0 表示不撞）。供撞母星预警（P0-3）显示倒计时；
+    // 纯附加字段，不影响既有判定与其它返回值的语义/精度。
+    const hitTime = hitMother ? (collideIdx + 1) * sim.sampleDt : 0;
+    return { level: level, path: outPath, endX: endX, endY: endY,
+             captured: captured, hitMother: hitMother, hitTime: hitTime };
   }
 
   /* ============ 导出 ============ */

@@ -16,6 +16,21 @@
   const BLACKHOLE_FADE = 1.5;
   // 粒子总量上限（超出时淘汰最旧粒子，避免同帧大量爆炸造成内存/绘制尖峰）
   const MAX_PARTICLES = 800;
+  // 减速额度（P0-1）：慢动作由「无限开关」改为有限资源，避免常开 0.25× 把 30 关的
+  // 递增难度（血量 28→16 / 星能 650→380 / 波数 8→22 / 难度 0.50→1.45）整体抹平。
+  // 扣减口径为真实帧时间：1 秒额度 = 1 秒真实减速，玩家成本可预期；
+  // 每清空一波返还一部分，鼓励「打得干净 → 换取从容布防的时间」。
+  const SLOW_QUOTA_MAX = 15;          // 额度上限（秒）
+  const SLOW_REFUND_PER_WAVE = 3;     // 每清空一波返还（秒）
+  const SLOW_LOW_RATIO = 0.25;        // 低于该比例视为「低额度」（UI 转琥珀色）
+  // 撤销最近放置（P0-2）：时间窗按游戏时钟计（慢动作下窗口按比例延长），
+  // 且只允许撤销「最近一颗仍在场上」的星体——保留布防决策的重量，不当零成本试错工具。
+  const UNDO_WINDOW = 5;              // 撤销时间窗（游戏秒）
+  const UNDO_HISTORY_MAX = 20;        // 历史条目上限（防长局无限增长）
+  // 设置存档（P0-4）：单一 JSON 键。音效开关仍由 audio.js 自管 starshield_audio，
+  // 不迁入此处，避免双写与音效状态被设置存档覆盖。
+  const SETTINGS_KEY = 'starshield_settings';
+  const DEFAULT_SETTINGS = { showHint: true, showWarnings: true };
   // 母星与玩家星体之间最小距离（半径 + 缓冲）。
   // 必须与 input.js 的 isInsidePlanet 使用同一个值，避免判定不一致。
   const PLANET_FORBIDDEN_PAD = 34;     // px
@@ -82,6 +97,11 @@
     timeScale: 1,
     gameOver: false,
     showHint: true,
+    showWarnings: true,      // 撞母星预警开关（P0-3，独立于提示线）
+    slowQuota: SLOW_QUOTA_MAX,  // 减速剩余额度（秒，P0-1）
+    gameTime: 0,             // 本局游戏时钟累计（秒，P0-2 撤销窗口口径）
+    placeHistory: [],        // 撤销历史：[{ body, cost, typeKey, time }]（P0-2）
+    threatWarnings: [],      // 撞母星预警：[{ x, y, radius, hitTime, id }]（P0-3，渲染端每帧写入）
     comets: 0,
     asteroids: 0,
     starsPlaced: 0,
@@ -121,6 +141,7 @@
   const LS_KEYS = [
     'starshield_best_score', 'starshield_best_waves',
     'starshield_campaign_unlocked', 'starshield_audio',
+    SETTINGS_KEY,
   ];
   // 存档异常反馈（M7）：localStorage 损坏/配额超限不再静默吞掉，
   // 记录一条待展示的提示，由 input.js 在回到菜单时用轻提示呈现给玩家。
@@ -133,6 +154,69 @@
     const w = pendingWarning;
     pendingWarning = '';
     return w;
+  }
+  // 游戏内轻提示队列（P0-1 等）：与 setWarning 同构，但由 input.js 主循环消费后
+  // 走 flashMessage 弹出，游戏模块本身不直接依赖 DOM。
+  let pendingNotice = '';
+  function pushNotice(msg) {
+    if (!pendingNotice) pendingNotice = msg;
+  }
+  function takeNotice() {
+    const n = pendingNotice;
+    pendingNotice = '';
+    return n;
+  }
+
+  // ===== 设置存档（P0-4）=====
+  // 单一 JSON 键保存「预测线 / 撞母星预警」等偏好；音效仍由 audio.js 自管。
+  // 解析失败或读写异常一律回退默认并复用 M7 的 setWarning 反馈（菜单可渲染）。
+  let settings = Object.assign({}, DEFAULT_SETTINGS);
+  function loadSettings() {
+    let raw = null;
+    try {
+      raw = localStorage.getItem(SETTINGS_KEY);
+    } catch (e) {
+      setWarning('设置读取失败：本地存储不可用');
+    }
+    let parsed = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        setWarning('设置存档已损坏，已回退默认设置');
+        parsed = null;
+      }
+    }
+    settings = Object.assign({}, DEFAULT_SETTINGS);
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.showHint === 'boolean') settings.showHint = parsed.showHint;
+      if (typeof parsed.showWarnings === 'boolean') settings.showWarnings = parsed.showWarnings;
+    }
+    state.showHint = settings.showHint;
+    state.showWarnings = settings.showWarnings;
+    return getSettings();
+  }
+  function saveSettings() {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      return true;
+    } catch (e) {
+      setWarning('设置保存失败：本地存储不可用或已满');
+      return false;
+    }
+  }
+  function getSettings() {
+    return Object.assign({}, settings);
+  }
+  // 仅接受已知键与同类型值（防止脏调用把存档写成意外结构）
+  function setSetting(key, value) {
+    if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key)) return false;
+    if (typeof DEFAULT_SETTINGS[key] !== typeof value) return false;
+    settings[key] = value;
+    if (key === 'showHint') state.showHint = value;
+    if (key === 'showWarnings') state.showWarnings = value;
+    saveSettings();
+    return true;
   }
   function loadBest() {
     try {
@@ -158,6 +242,11 @@
       for (const k of LS_KEYS) localStorage.removeItem(k);
     } catch (e) {}
     bestScore = 0; bestWaves = 0; campaignUnlocked = 0;
+    // 设置同步复位为默认值（P0-4）：存档已删除，若内存不复位会出现"界面与存档不一致"
+    settings = Object.assign({}, DEFAULT_SETTINGS);
+    state.showHint = settings.showHint;
+    state.showWarnings = settings.showWarnings;
+    pendingNotice = '';
     // 重新加载菜单时由调用方负责刷新显示
   }
   // 整数化总分：由四类计分明细（各自取整）代数求和推导，保证与结算面板明细严格一致、
@@ -234,6 +323,14 @@
     state.spawnAccumulator = 0;
     state.healthFlash = 0;
 
+    // 减速额度 / 撤销历史 / 预警列表（P0-1 / P0-2 / P0-3）：每局从零开始。
+    // 注意：timeScale 属会话级偏好，开局不重置（由额度耗尽机制兜底），
+    // 避免与「直写 state.timeScale」的既有行为分叉。
+    state.slowQuota = SLOW_QUOTA_MAX;
+    state.gameTime = 0;
+    state.placeHistory = [];
+    state.threatWarnings = [];
+
     state.health = lvl.health;
     state.budget = lvl.budget;
 
@@ -297,9 +394,10 @@
     const isBH = typeKey === 'blackhole';
     const vx = (opts && Number.isFinite(opts.vx)) ? opts.vx : 0;
     const vy = (opts && Number.isFinite(opts.vy)) ? opts.vy : 0;
+    let body;
     if (isBH) {
       // 玩家黑洞：固定位置（不随引力移动），BLACKHOLE_LIFE 游戏秒后自动消失
-      state.bodies.push({
+      body = {
         type: 'blackhole', mass: def.mass, radius: def.radius,
         x: p.x, y: p.y, vx: 0, vy: 0,
         anchored: true,                                  // 锚定，不被引力推动
@@ -307,16 +405,72 @@
         isCollectable: true, placedType: typeKey,
         lifeRemaining: BLACKHOLE_LIFE,                   // 剩余存活（游戏秒，见 M1）
         fading: false,                                   // 即将消失动画中
-      });
+      };
     } else {
-      state.bodies.push({
+      body = {
         type: 'star', mass: def.mass, radius: def.radius,
         x: p.x, y: p.y, vx, vy,
         isCollectable: true, placedType: typeKey,
-      });
+      };
     }
+    state.bodies.push(body);
     state.starsPlaced++;
+    recordPlacement(body, typeKey, def.cost);             // 记入撤销历史（P0-2）
     return { ok: true };
+  }
+
+  // ===== 撤销最近放置（P0-2）=====
+  // 只允许撤销「最近一颗仍在场上、且未超过时间窗」的星体：
+  //   - 时间窗按游戏时钟计（慢动作下窗口按比例延长，与 M1 黑洞寿命口径一致）；
+  //   - 已被母星吸收 / 被黑洞吞噬 / 飞出边界的星体不可撤销（条目惰性失效）；
+  //   - 保留布防决策的重量，避免撤销变成零成本试错工具。
+  function recordPlacement(body, typeKey, cost) {
+    state.placeHistory.push({ body: body, cost: cost, typeKey: typeKey, time: state.gameTime });
+    // 上限保护：长局持续放置时淘汰最旧条目（历史只用于"最近一次"，淘汰旧条目无副作用）
+    if (state.placeHistory.length > UNDO_HISTORY_MAX) {
+      state.placeHistory.splice(0, state.placeHistory.length - UNDO_HISTORY_MAX);
+    }
+  }
+  // 条目是否仍可撤销：仍在场上、未死亡、且在时间窗内
+  function isUndoEntryValid(entry) {
+    if (!entry || !entry.body) return false;
+    if (entry.body.dead) return false;
+    if (state.bodies.indexOf(entry.body) < 0) return false;
+    return (state.gameTime - entry.time) <= UNDO_WINDOW;
+  }
+  // 惰性清理尾部失效条目：它们永远无法被撤销，留在栈里只会让状态失真
+  function prunePlaceHistory() {
+    while (state.placeHistory.length > 0
+           && !isUndoEntryValid(state.placeHistory[state.placeHistory.length - 1])) {
+      state.placeHistory.pop();
+    }
+  }
+  function canUndo() {
+    if (!state.gameStarted || state.gameOver) return { ok: false, reason: '' };
+    if (!Array.isArray(state.placeHistory)) return { ok: false, reason: '' };
+    prunePlaceHistory();
+    const entry = state.placeHistory[state.placeHistory.length - 1];
+    if (!entry) return { ok: false, reason: '' };
+    return { ok: true, reason: '', refund: entry.cost };
+  }
+  function undoLastPlacement() {
+    if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法撤销' };
+    if (!Array.isArray(state.placeHistory)) return { ok: false, reason: '没有可撤销的放置' };
+    prunePlaceHistory();
+    const entry = state.placeHistory.pop();
+    if (!entry) return { ok: false, reason: '没有可撤销的放置（仅可撤销最近 5 秒内放置且仍在场上的星体）' };
+    const idx = state.bodies.indexOf(entry.body);
+    if (idx < 0) return { ok: false, reason: '该星体已不在场上' };
+    state.bodies.splice(idx, 1);
+    // 全额返还：误投不应造成星能损失（黑洞同样整体返还，天体已移除、不涉及寿命折算）
+    state.budget = Math.min(99999, state.budget + entry.cost);
+    state.totalSpent = Math.max(0, state.totalSpent - entry.cost);
+    if (state.starsPlaced > 0) state.starsPlaced--;
+    // 反馈：蓝色冲击波 + 轻盈音效（与"被吸收"同源，语义为"收回"）
+    spawnShockwave(entry.body.x, entry.body.y, (entry.body.radius || 12) + 40,
+                   'rgba(150,205,255,0.65)', 0.35);
+    audio.play('flee');
+    return { ok: true, reason: '', refund: entry.cost };
   }
 
   // ===== 随机波次生成 =====
@@ -470,6 +624,39 @@
     const wb = 15 + 5 * state.wave;
     state.lastWaveBonus = wb;
     state.scoreWaveBonus += wb;
+    // 减速额度返还（P0-1）：清空一波即可换回少量慢动作时间（封顶）。
+    // 与计分解耦——额度只影响操作手感，不改变任何得分口径。
+    state.slowQuota = Math.min(SLOW_QUOTA_MAX, state.slowQuota + SLOW_REFUND_PER_WAVE);
+  }
+
+  // ===== 减速额度（P0-1）=====
+  // 切换慢动作的唯一入口（input.js 不再直接写 state.timeScale）：
+  // 额度耗尽时拒绝进入减速并给出可读提示，返回 { ok, timeScale, reason }。
+  function toggleSlowMotion() {
+    if (!state.gameStarted || state.gameOver) {
+      return { ok: false, timeScale: state.timeScale, reason: '当前无法切换时间' };
+    }
+    if (state.timeScale === 1) {
+      if (state.slowQuota <= 0) {
+        pushNotice('减速额度已用尽：每清空一波返还 ' + SLOW_REFUND_PER_WAVE + ' 秒');
+        return { ok: false, timeScale: 1, reason: '减速额度已用尽' };
+      }
+      state.timeScale = 0.25;
+      return { ok: true, timeScale: 0.25, reason: '' };
+    }
+    state.timeScale = 1;
+    return { ok: true, timeScale: 1, reason: '' };
+  }
+  function slowMotionState() {
+    const max = SLOW_QUOTA_MAX;
+    const quota = Math.max(0, Math.min(max, Number.isFinite(state.slowQuota) ? state.slowQuota : max));
+    return {
+      quota: quota,
+      max: max,
+      ratio: max > 0 ? quota / max : 0,
+      low: quota / max <= SLOW_LOW_RATIO,
+      exhausted: quota <= 0,
+    };
   }
 
   // ===== 撞击动画工具 =====
@@ -646,6 +833,17 @@
     const real = (typeof dtReal === 'number' && Number.isFinite(dtReal) && dtReal > 0)
       ? Math.min(dtReal, MAX_FRAME_DT)
       : DT;
+    // 减速额度扣减（P0-1）：按真实帧时间，且必须放在下面 `steps === 0` 提前返回之前——
+    // 否则 120Hz 高刷屏上偶数帧会漏扣，额度消耗速率减半。
+    // 这里只做「额度耗尽 → 降级回常速」的单向处理，不改写正常的 timeScale，
+    // 保持 stepFrame 对 state.timeScale 的既有直读语义（旧调用与测试兼容）。
+    if (state.timeScale < 1) {
+      state.slowQuota = Math.max(0, state.slowQuota - real);
+      if (state.slowQuota <= 0) {
+        state.timeScale = 1;
+        pushNotice('减速额度已用尽，已恢复常速（每清空一波返还 ' + SLOW_REFUND_PER_WAVE + ' 秒）');
+      }
+    }
     stepAccumulator += real * state.timeScale;
     let steps = 0;
     while (stepAccumulator >= DT && steps < MAX_SUBSTEPS) {
@@ -655,6 +853,8 @@
     if (steps === 0) return;                       // 还没攒够一步（高刷屏上常见）
     if (stepAccumulator >= DT) stepAccumulator = 0; // 积压过多 → 丢弃，避免追帧雪崩
     const dtFrame = DT * steps;
+    // 本局游戏时钟（P0-2）：撤销时间窗与其它"游戏内时长"统一以此为准（慢动作下按比例延长）
+    state.gameTime += dtFrame;
 
     if (!state.waveActive) {
       state.waveTimer += dtFrame;
@@ -1062,11 +1262,27 @@
     isLevelUnlocked,
     getCampaignUnlocked: function () { return campaignUnlocked; },
     takeWarning,
+    takeNotice,
+    // P0-1 减速额度
+    toggleSlowMotion,
+    slowMotionState,
+    // P0-2 撤销最近放置
+    canUndo,
+    undoLastPlacement,
+    // P0-4 设置持久化
+    loadSettings,
+    saveSettings,
+    getSettings,
+    setSetting,
     STAR_TYPES,
     SURVIVAL_LEVELS,
     CAMPAIGN_LEVELS,
     PLANET_FORBIDDEN_PAD,
+    SLOW_QUOTA_MAX,
+    SLOW_REFUND_PER_WAVE,
+    UNDO_WINDOW,
   };
 
+  loadSettings();
   loadBest();
 })();
