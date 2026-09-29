@@ -215,6 +215,23 @@
     // 星体
     for (const b of state.bodies) drawBody(ctx, b, performance.now() / 1000, state);
 
+    // 选中光环（P1-B）：点选场上星体后的可操作提示。
+    // 仅用独立 ctx 方法（禁止链式渐变）；选中目标已离场时直接跳过。
+    const sel = state.selectedBody;
+    if (sel && state.bodies.indexOf(sel) >= 0) {
+      const t = performance.now() / 1000;
+      const pulse = 0.5 + 0.5 * Math.sin(t * 7.85);        // 约 0.8s 周期
+      const r = (sel.radius || 12) + 7 + pulse * 3;
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(59,155,255,' + (0.85 - pulse * 0.35).toFixed(2) + ')';
+      ctx.lineWidth = 1.6 + pulse * 0.8;
+      ctx.beginPath();
+      ctx.arc(sel.x, sel.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // 拖放预测线（先把 placingStars 注入当前系统，模拟其轨迹）
     const ps = window.__placingStars;
     if (ps && ps.length && state.showHint && state.gameStarted && !state.gameOver) {

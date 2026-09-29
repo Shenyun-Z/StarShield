@@ -31,6 +31,22 @@
   // 不迁入此处，避免双写与音效状态被设置存档覆盖。
   const SETTINGS_KEY = 'starshield_settings';
   const DEFAULT_SETTINGS = { showHint: true, showWarnings: true };
+  // ===== 星级评价（P1-A，对标塔防 3 星制）=====
+  // 仅闯关模式计星：★1 通关 / ★2 通关且受击 ≤ 自适应阈值 / ★3 零受击。
+  // 阈值必须"保证可达"，故按本关波数自适应并设下限（不同关卡波数 8~22 差异很大，
+  // 固定阈值会让长关卡几乎不可能拿到 2 星）。
+  const STARS_KEY = 'starshield_stars';
+  const STAR2_HIT_RATIO = 0.5;      // ★2 门槛 = round(波数 × 0.5)
+  const STAR2_HIT_MIN = 2;          // 但至少允许受击 2 次
+  const STAR_MAX_PER_LEVEL = 3;
+  // ===== 回收 / 升级（P1-B）=====
+  // 与既有「撤销」语义严格区分：撤销＝放置后 5 游戏秒内、全额、纠错；
+  // 回收＝任意时刻、返还 70%、战术腾挪（有代价）。
+  const RECYCLE_REFUND_RATIO = 0.7;
+  const UPGRADE_CHAIN = ['small', 'mid', 'large', 'star'];   // 升级链（黑洞不参与）
+  const BODY_PICK_PAD = 8;          // 点选星体的命中放宽（px，便于触屏）
+  // ===== 成就（P1-C）=====
+  const ACHIEVEMENTS_KEY = 'starshield_achievements';
   // 母星与玩家星体之间最小距离（半径 + 缓冲）。
   // 必须与 input.js 的 isInsidePlanet 使用同一个值，避免判定不一致。
   const PLANET_FORBIDDEN_PAD = 34;     // px
@@ -102,6 +118,13 @@
     gameTime: 0,             // 本局游戏时钟累计（秒，P0-2 撤销窗口口径）
     placeHistory: [],        // 撤销历史：[{ body, cost, typeKey, time }]（P0-2）
     threatWarnings: [],      // 撞母星预警：[{ x, y, radius, hitTime, id }]（P0-3，渲染端每帧写入）
+    // P1 新增：选中态（不写入 bodies，仅 UI/渲染读取）与本局统计（供成就判定）
+    selectedBody: null,
+    slowUsedSeconds: 0,      // 本局减速累计使用（真实秒）
+    upgrades: 0,             // 本局升级次数
+    recycles: 0,             // 本局回收次数
+    blackholeSwallowed: 0,   // 本局黑洞吞噬威胁数
+    lastStars: 0,            // 最近一局获得的星数（结算展示用）
     comets: 0,
     asteroids: 0,
     starsPlaced: 0,
@@ -141,7 +164,7 @@
   const LS_KEYS = [
     'starshield_best_score', 'starshield_best_waves',
     'starshield_campaign_unlocked', 'starshield_audio',
-    SETTINGS_KEY,
+    SETTINGS_KEY, STARS_KEY, ACHIEVEMENTS_KEY,
   ];
   // 存档异常反馈（M7）：localStorage 损坏/配额超限不再静默吞掉，
   // 记录一条待展示的提示，由 input.js 在回到菜单时用轻提示呈现给玩家。
@@ -218,6 +241,291 @@
     saveSettings();
     return true;
   }
+
+  // ===== 星级评价与累计星星（P1-A）=====
+  // 存档 { "<levelIndex>": 1|2|3 }。总星数由该表求和派生，不额外维护计数，
+  // 避免「两份真值漂移」（与 integerScore() 的单一数据源思路一致）。
+  let stars = Object.create(null);
+  function parseStars(raw) {
+    const out = Object.create(null);
+    if (!raw) return out;
+    let obj = null;
+    try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+    if (!obj || typeof obj !== 'object') return out;
+    for (const k in obj) {
+      if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+      const idx = parseInt(k, 10);
+      const v = parseInt(obj[k], 10);
+      // 存档可被手工篡改：越界键与非法值一律丢弃，避免污染总星数与 UI
+      if (!Number.isFinite(idx) || idx < 0 || idx >= CAMPAIGN_LEVELS.length) continue;
+      if (!Number.isFinite(v) || v <= 0) continue;
+      out[String(idx)] = clamp(v, 1, STAR_MAX_PER_LEVEL);
+    }
+    return out;
+  }
+  function loadStars() {
+    let raw = null;
+    try { raw = localStorage.getItem(STARS_KEY); } catch (e) { setWarning('星级存档读取失败：本地存储不可用'); }
+    const parsed = parseStars(raw);
+    if (raw && Object.keys(parsed).length === 0) setWarning('星级存档已损坏，已回退为空进度');
+    stars = parsed;
+    migrateStars();
+    return getStars();
+  }
+  // 旧进度迁移：老存档只有「已通关 N 关」而没有星级表 → 为这些关卡各补 1 星，不让老玩家倒退。
+  // 按"逐关补缺"而非"整表为空才迁移"：既覆盖完全缺失，也能修复部分缺失（如迁移中途写盘失败），
+  // 且天然幂等——无变化时不写盘。
+  function migrateStars() {
+    if (campaignUnlocked <= 0) return 0;
+    let n = 0;
+    const max = Math.min(campaignUnlocked, CAMPAIGN_LEVELS.length);
+    for (let i = 0; i < max; i++) {
+      const key = String(i);
+      if (!stars[key] || stars[key] < 1) { stars[key] = 1; n++; }
+    }
+    if (n > 0) saveStars();
+    return n;
+  }
+  function saveStars() {
+    try { localStorage.setItem(STARS_KEY, JSON.stringify(stars)); return true; }
+    catch (e) { setWarning('星级保存失败：本地存储不可用或已满'); return false; }
+  }
+  function getStars() { return Object.assign(Object.create(null), stars); }
+  function starsForLevel(idx) {
+    const v = parseInt(stars[String(idx)] || '0', 10);
+    return Number.isFinite(v) ? clamp(v, 0, STAR_MAX_PER_LEVEL) : 0;
+  }
+  function getTotalStars() {
+    let sum = 0;
+    for (const k in stars) {
+      if (Object.prototype.hasOwnProperty.call(stars, k)) sum += stars[k];
+    }
+    return sum;
+  }
+  function totalStarsMax() { return CAMPAIGN_LEVELS.length * STAR_MAX_PER_LEVEL; }
+  // ★2 门槛：按本关波数自适应（8~22 波差异大，固定阈值会让长关卡几乎拿不到 2 星）
+  function star2HitLimit(totalWaves) {
+    const w = Math.max(1, parseInt(totalWaves, 10) || 1);
+    return Math.max(STAR2_HIT_MIN, Math.round(w * STAR2_HIT_RATIO));
+  }
+  function getStarCriteria(levelIndex) {
+    const lvl = CAMPAIGN_LEVELS[levelIndex];
+    const totalWaves = (lvl && Array.isArray(lvl.waves)) ? lvl.waves.length : 1;
+    return {
+      totalWaves: totalWaves,
+      star2HitLimit: star2HitLimit(totalWaves),
+      max: STAR_MAX_PER_LEVEL,
+      totalMax: totalStarsMax(),
+    };
+  }
+  // 纯函数：星级只由「模式 + 结束原因 + 受击次数 + 总波数」决定，便于 UI 预览与独立测试。
+  // 生存模式不计星（保持「比拼累计分数」的既有口径不变）。
+  function computeStars(s) {
+    if (!s || s.mode !== 'campaign') return 0;
+    if (s.endReason !== 'win') return 0;
+    const hits = Math.max(0, parseInt(s.hitCount, 10) || 0);
+    if (hits === 0) return STAR_MAX_PER_LEVEL;
+    return hits <= star2HitLimit(s.totalWaves) ? 2 : 1;
+  }
+  // 写入本局星级（只增不减），返回本局获得的星数
+  function recordRunStars() {
+    const totalWaves = (state.level && Array.isArray(state.level.waves)) ? state.level.waves.length : 0;
+    const earned = computeStars({
+      mode: state.mode, endReason: state.endReason, hitCount: state.hitCount, totalWaves: totalWaves,
+    });
+    state.lastStars = earned;
+    if (earned <= 0) return 0;
+    const key = String(state.levelIndex);
+    if (earned > (stars[key] || 0)) {
+      stars[key] = earned;
+      saveStars();
+    }
+    return earned;
+  }
+
+  // ===== 成就（P1-C）=====
+  // 声明式定义：need(stats) 只读 getCurrentRunStats() 的字段，判定与 UI 完全解耦、可独立测试。
+  const ACHIEVEMENTS = [
+    { id: 'first_win',    name: '初次告捷', desc: '首次通关任意闯关关卡',
+      need: (s) => s.mode === 'campaign' && s.endReason === 'win' },
+    { id: 'no_hit_win',   name: '铜墙铁壁', desc: '零受击通关（三星）',
+      need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.hits === 0 },
+    { id: 'hit_survive',  name: '浴火重生', desc: '母星受击 5 次以上仍通关',
+      need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.hits >= 5 },
+    { id: 'wave_15',      name: '波次机器', desc: '单局击退 15 波以上并通关',
+      need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.wave >= 15 },
+    { id: 'star_30',      name: '群星闪耀', desc: '累计获得 30 颗星',
+      need: () => getTotalStars() >= 30 },
+    { id: 'star_60',      name: '星河为证', desc: '累计获得 60 颗星',
+      need: () => getTotalStars() >= 60 },
+    { id: 'star_all',     name: '完美星域', desc: '集齐全部 90 颗星',
+      need: () => getTotalStars() >= totalStarsMax() },
+    { id: 'clear_50',     name: '拦截专家', desc: '单局拦截 50 个来袭威胁',
+      need: (s) => s.cleared >= 50 },
+    { id: 'bh_10',        name: '黑洞胃王', desc: '单局用黑洞吞噬 10 个威胁',
+      need: (s) => s.blackholeSwallowed >= 10 },
+    { id: 'no_slow_win',  name: '从容不迫', desc: '不使用慢动作通关',
+      need: (s) => s.endReason === 'win' && s.slowUsedSeconds <= 0 },
+    { id: 'thrifty',      name: '一次成型', desc: '通关过程中不回收、不升级',
+      need: (s) => s.endReason === 'win' && s.mode === 'campaign' && s.recycles === 0 && s.upgrades === 0 },
+    { id: 'tinkerer',     name: '机械师', desc: '单局完成 5 次星体升级',
+      need: (s) => s.upgrades >= 5 },
+    { id: 'eco_win',      name: '零浪费', desc: '闯关通关且星能结余 ≥ 200',
+      need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.budgetLeft >= 200 },
+    { id: 'survive_500',  name: '长明者', desc: '生存模式单局得分 ≥ 500',
+      need: (s) => s.mode === 'survival' && s.score >= 500 },
+  ];
+  let achievements = Object.create(null);
+  let pendingAchievements = [];
+  function loadAchievements() {
+    let raw = null;
+    try { raw = localStorage.getItem(ACHIEVEMENTS_KEY); } catch (e) { setWarning('成就存档读取失败：本地存储不可用'); }
+    achievements = Object.create(null);
+    if (raw) {
+      let obj = null;
+      try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+      if (!obj || typeof obj !== 'object') {
+        setWarning('成就存档已损坏，已回退为空进度');
+      } else {
+        for (const k in obj) {
+          if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+          // 只接受当前版本仍存在的成就 id（旧版本残留键直接忽略）
+          if (ACHIEVEMENTS.some(a => a.id === k)) achievements[k] = obj[k] || Date.now();
+        }
+      }
+    }
+    pendingAchievements = [];
+    return getAchievementList();
+  }
+  function saveAchievements() {
+    try { localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(achievements)); return true; }
+    catch (e) { setWarning('成就保存失败：本地存储不可用或已满'); return false; }
+  }
+  function getAchievementList() {
+    return ACHIEVEMENTS.map(a => ({
+      id: a.id, name: a.name, desc: a.desc,
+      unlocked: !!achievements[a.id],
+      time: achievements[a.id] || 0,
+    }));
+  }
+  // 幂等解锁：已解锁项直接跳过；判定抛异常按"未达成"处理，绝不打断结算流程。
+  function evaluateAchievements(stats) {
+    const s = stats || getCurrentRunStats();
+    const unlocked = [];
+    for (const a of ACHIEVEMENTS) {
+      if (achievements[a.id]) continue;
+      let hit = false;
+      try { hit = !!a.need(s); } catch (e) { hit = false; }
+      if (hit) {
+        achievements[a.id] = Date.now();
+        unlocked.push({ id: a.id, name: a.name, desc: a.desc });
+      }
+    }
+    if (unlocked.length) {
+      pendingAchievements = pendingAchievements.concat(unlocked);
+      saveAchievements();
+    }
+    return { unlocked: unlocked, total: ACHIEVEMENTS.length, count: Object.keys(achievements).length };
+  }
+  // 供 UI 一次性取走"本次新解锁"（与 takeWarning / takeNotice 同构）
+  function takeNewAchievements() {
+    const list = pendingAchievements;
+    pendingAchievements = [];
+    return list;
+  }
+
+  // ===== 星体回收与就地升级（P1-B）=====
+  // 与「撤销」的语义边界：撤销＝放置后 5 游戏秒内、全额返还、自动失效（纠错）；
+  // 回收＝任意时刻、返还 70%、有代价（战术腾挪）。两者互不改写对方的数组与存档。
+  function placedTypeKeyOf(body) {
+    if (!body || body.type !== 'star') return null;
+    return UPGRADE_CHAIN.indexOf(body.placedType) >= 0 ? body.placedType : null;
+  }
+  function nextTypeKeyOf(body) {
+    const cur = placedTypeKeyOf(body);
+    if (!cur) return null;
+    const i = UPGRADE_CHAIN.indexOf(cur);
+    return (i >= 0 && i + 1 < UPGRADE_CHAIN.length) ? UPGRADE_CHAIN[i + 1] : null;
+  }
+  function recycleRefundOf(body) {
+    const def = body ? STAR_TYPES[body.placedType] : null;
+    return def ? Math.round(def.cost * RECYCLE_REFUND_RATIO) : 0;
+  }
+  function recycleBody(body) {
+    if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法回收' };
+    const idx = state.bodies.indexOf(body);
+    if (idx < 0) return { ok: false, reason: '该星体已不在场上' };
+    if (body.type !== 'star' && body.type !== 'blackhole') return { ok: false, reason: '该天体不可回收' };
+    const refund = recycleRefundOf(body);
+    state.bodies.splice(idx, 1);
+    state.budget = Math.min(99999, state.budget + refund);
+    // totalSpent 口径＝本局净花费（已花 − 已返还），与撤销的记账方式保持一致
+    state.totalSpent = Math.max(0, state.totalSpent - refund);
+    state.recycles += 1;
+    if (state.selectedBody === body) state.selectedBody = null;
+    spawnShockwave(body.x, body.y, (body.radius || 12) + 50, 'rgba(255,178,122,0.7)', 0.38);
+    spawnExplosion(body.x, body.y, '#ffb27a', 10);
+    audio.play('flee');
+    return { ok: true, reason: '', refund: refund };
+  }
+  function upgradeBody(body) {
+    if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法升级' };
+    if (state.bodies.indexOf(body) < 0) return { ok: false, reason: '该星体已不在场上' };
+    const curKey = placedTypeKeyOf(body);
+    if (!curKey) return { ok: false, reason: body && body.type === 'blackhole' ? '黑洞不可升级' : '该天体不可升级' };
+    const nextKey = nextTypeKeyOf(body);
+    if (!nextKey) return { ok: false, reason: '已达最高档位' };
+    const delta = STAR_TYPES[nextKey].cost - STAR_TYPES[curKey].cost;
+    if (state.budget < delta) return { ok: false, reason: '星能不足（需 ' + delta + '）' };
+    state.budget -= delta;
+    state.totalSpent += delta;
+    // 就地升级：保留位置与初速，仅替换质量/半径/档位
+    body.mass = STAR_TYPES[nextKey].mass;
+    body.radius = STAR_TYPES[nextKey].radius;
+    body.placedType = nextKey;
+    state.upgrades += 1;
+    // 升级改变了该星体的档位与花费，原「放置」记录不再成立：从撤销历史中移除，
+    // 否则撤销会按旧价返还（既不符合直觉，也会与升级差价形成记账矛盾）。
+    for (let i = state.placeHistory.length - 1; i >= 0; i--) {
+      if (state.placeHistory[i].body === body) state.placeHistory.splice(i, 1);
+    }
+    spawnShockwave(body.x, body.y, body.radius + 60, 'rgba(120,190,255,0.7)', 0.4);
+    audio.play('place');
+    return { ok: true, reason: '', delta: delta };
+  }
+  // 点选场上星体（母星与来袭威胁不可选）
+  function selectBodyAt(point) {
+    if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法选中' };
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return { ok: false, reason: '' };
+    let found = null;
+    for (let i = state.bodies.length - 1; i >= 0; i--) {
+      const b = state.bodies[i];
+      if (b.type !== 'star' && b.type !== 'blackhole') continue;
+      const r = (b.radius || 12) + BODY_PICK_PAD;
+      if (Math.hypot(point.x - b.x, point.y - b.y) <= r) { found = b; break; }
+    }
+    state.selectedBody = found;
+    return found ? { ok: true, reason: '', body: found } : { ok: false, reason: '' };
+  }
+  function clearSelection() { state.selectedBody = null; }
+  // 操作面板数据（升级差价 / 回收返还），UI 只读不改
+  function getBodyActionInfo(body) {
+    if (!body) return null;
+    const isBH = body.type === 'blackhole';
+    const def = body.placedType ? STAR_TYPES[body.placedType] : null;
+    const nextKey = isBH ? null : nextTypeKeyOf(body);
+    const delta = nextKey ? (STAR_TYPES[nextKey].cost - STAR_TYPES[body.placedType].cost) : 0;
+    return {
+      typeKey: body.placedType || null,
+      name: def ? def.name : (isBH ? '黑洞' : '星体'),
+      refund: recycleRefundOf(body),
+      canRecycle: true,
+      canUpgrade: !!nextKey && state.budget >= delta,
+      upgradeName: nextKey ? STAR_TYPES[nextKey].name : '',
+      upgradeDelta: delta,
+      upgradeReason: nextKey ? (state.budget >= delta ? '' : '星能不足') : (isBH ? '黑洞不可升级' : '已达最高档位'),
+    };
+  }
   function loadBest() {
     try {
       bestScore = Math.max(0, parseInt(localStorage.getItem('starshield_best_score') || '0', 10) || 0);
@@ -247,6 +555,12 @@
     state.showHint = settings.showHint;
     state.showWarnings = settings.showWarnings;
     pendingNotice = '';
+    // 星级 / 成就同样复位（P1）：存档已删除，内存若不复位会出现"界面与存档不一致"
+    stars = Object.create(null);
+    achievements = Object.create(null);
+    pendingAchievements = [];
+    state.lastStars = 0;
+    state.selectedBody = null;
     // 重新加载菜单时由调用方负责刷新显示
   }
   // 整数化总分：由四类计分明细（各自取整）代数求和推导，保证与结算面板明细严格一致、
@@ -330,6 +644,13 @@
     state.gameTime = 0;
     state.placeHistory = [];
     state.threatWarnings = [];
+    // P1：选中态与本局统计（成就判定输入）逐局重置
+    state.selectedBody = null;
+    state.slowUsedSeconds = 0;
+    state.upgrades = 0;
+    state.recycles = 0;
+    state.blackholeSwallowed = 0;
+    state.lastStars = 0;
 
     state.health = lvl.health;
     state.budget = lvl.budget;
@@ -692,6 +1013,8 @@
     const gain = Math.max(1, Math.round(base * diffMul * modeMul));
     state.scoreIntercept += gain;
     state.asteroidsCleared += 1;
+    // 成就统计（P1-C）：黑洞吞噬数量（method 此前未差异化，正好作为钩子）
+    if (method === 'blackhole') state.blackholeSwallowed += 1;
     // 闯关模式资源回收：每清除一个威胁返还少量星能（替代旧 rewards 硬编码）
     if (state.mode === 'campaign') {
       state.budget = Math.min(99999, state.budget + 2);
@@ -790,6 +1113,12 @@
     state.endReason = reason || 'defeat';    // 'defeat' | 'timeup' | 'win'
     // 通关当前关：解锁下一关（闯关模式成就推进）
     if (state.endReason === 'win') unlockNextLevel();
+    // 星级评价（P1-A）：仅闯关通关计星，且只增不减
+    if (state.mode === 'campaign') recordRunStars();
+    // 成就判定（P1-C）：必须放在星级写入之后——star_30/star_60/star_all 依赖最新总星数
+    evaluateAchievements();
+    // 结算时清空选中态（操作面板由 input 层同步隐藏）
+    state.selectedBody = null;
     updateBest();
     // 音效：通关/时间到 → 庆祝；母星陨落/防线失守 → gameover
     audio.play(state.endReason === 'win' ? 'place' : (state.endReason === 'timeup' ? 'place' : 'gameover'));
@@ -838,6 +1167,7 @@
     // 这里只做「额度耗尽 → 降级回常速」的单向处理，不改写正常的 timeScale，
     // 保持 stepFrame 对 state.timeScale 的既有直读语义（旧调用与测试兼容）。
     if (state.timeScale < 1) {
+      state.slowUsedSeconds += real;          // 成就统计（P1-C）：本局实际减速时长（真实秒）
       state.slowQuota = Math.max(0, state.slowQuota - real);
       if (state.slowQuota <= 0) {
         state.timeScale = 1;
@@ -1204,6 +1534,7 @@
     // 清理所有动态状态
     state.shake = 0;
     state.healthFlash = 0;
+    state.selectedBody = null;      // 回菜单时清空选中态，避免残留光环
     document.getElementById('menu').classList.remove('hidden');
     document.getElementById('hud').classList.add('hidden');
     document.getElementById('starBar').classList.add('hidden');
@@ -1240,6 +1571,15 @@
       // 计分权重说明参数
       diffMul: Number((1 + Math.max(0, state.difficulty - 0.3) * 1.4).toFixed(2)),
       modeMul: state.mode === 'campaign' ? Number((1 + state.levelIndex * 0.15).toFixed(2)) : 1,
+      // P1 扩展字段（只增不改：既有字段名与口径保持原样，成就判定与结算展示共用）
+      levelIndex: state.levelIndex,
+      slowUsedSeconds: Math.round(state.slowUsedSeconds * 100) / 100,
+      upgrades: state.upgrades,
+      recycles: state.recycles,
+      blackholeSwallowed: state.blackholeSwallowed,
+      budgetLeft: Math.round(state.budget),
+      stars: state.lastStars,
+      totalStars: getTotalStars(),
     };
   }
 
@@ -1274,6 +1614,28 @@
     saveSettings,
     getSettings,
     setSetting,
+    // P1-A 星级评价
+    loadStars,
+    saveStars,
+    getStars,
+    starsForLevel,
+    getTotalStars,
+    totalStarsMax,
+    getStarCriteria,
+    computeStars,
+    // P1-B 回收 / 升级 / 选中
+    recycleBody,
+    upgradeBody,
+    selectBodyAt,
+    clearSelection,
+    getBodyActionInfo,
+    // P1-C 成就
+    loadAchievements,
+    saveAchievements,
+    getAchievementList,
+    evaluateAchievements,
+    takeNewAchievements,
+    ACHIEVEMENTS,
     STAR_TYPES,
     SURVIVAL_LEVELS,
     CAMPAIGN_LEVELS,
@@ -1281,8 +1643,14 @@
     SLOW_QUOTA_MAX,
     SLOW_REFUND_PER_WAVE,
     UNDO_WINDOW,
+    RECYCLE_REFUND_RATIO,
+    UPGRADE_CHAIN,
+    STAR_MAX_PER_LEVEL,
   };
 
   loadSettings();
   loadBest();
+  // 星级迁移依赖 campaignUnlocked，必须放在 loadBest() 之后
+  loadStars();
+  loadAchievements();
 })();

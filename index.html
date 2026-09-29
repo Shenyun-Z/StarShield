@@ -68,11 +68,28 @@
     <!-- 关卡横幅（每次开局淡入淡出） -->
     <div id="levelBanner"></div>
 
+    <!-- 星体操作面板：点选场上星体后出现（升级 / 回收） -->
+    <div id="bodyPanel" class="body-panel" style="display:none">
+      <span id="bpName" class="bp-name">星体</span>
+      <button id="bpUpgrade" class="ctrl">升级</button>
+      <button id="bpRecycle" class="ctrl">回收</button>
+      <button id="bpClose" class="ctrl ghost">关闭</button>
+    </div>
+
     <!-- 失败结算面板：默认隐藏 -->
     <div id="result" class="result hidden">
       <div class="result-card">
         <h2 id="resultTitle">防线失守</h2>
         <p id="resultSubtitle" class="result-sub"></p>
+
+        <!-- 关卡星级评价（闯关模式通关时展示） -->
+        <div id="resultStars" class="result-stars" style="display:none">
+          <div id="rsStarRow" class="rs-star-row"></div>
+          <div id="rsStarNote" class="rs-star-note"></div>
+        </div>
+
+        <!-- 本次新解锁的成就 -->
+        <div id="resultAchieve" class="result-achieve" style="display:none"></div>
 
         <div class="result-overview">
           <div id="rsWavesItem"><span class="rs-label">撑过波次</span><span id="rsWaves">0</span></div>
@@ -158,6 +175,13 @@
       </div>
 
       <div id="menuBest" class="menu-best"></div>
+
+      <!-- 成就面板（本地存档，可折叠） -->
+      <div class="menu-section">
+        <div class="menu-title" id="achieveTitle">成就</div>
+        <button id="achieveToggle" class="opt-btn">展开成就</button>
+        <div id="achieveList" class="achieve-list" style="display:none"></div>
+      </div>
 
       <div class="menu-footer">
         <button id="menuClearProg" class="opt-btn danger">一键清除进度</button>

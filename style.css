@@ -482,6 +482,62 @@ html, body {
   line-height: 1.5;
 }
 
+/* ---------- 星级评价 / 成就面板 / 星体操作面板（P1） ---------- */
+.result-stars { margin: 6px 0 14px; }
+.rs-star-row { display: flex; justify-content: center; gap: 8px; font-size: 30px; line-height: 1; }
+.rs-star { color: #6f86b3; opacity: 0.32; transition: transform .25s ease, opacity .25s ease; }
+.rs-star.on {
+  color: #ffe28a;
+  opacity: 1;
+  text-shadow: 0 0 14px rgba(255,226,138,0.55);
+}
+/* 逐颗渐入放大：由 JS 按 120ms 间隔追加 .pop（避免在测试 stub 上调用 classList.toggle） */
+.rs-star.pop { animation: starPop .42s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes starPop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.22); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.rs-star-note { margin-top: 7px; font-size: 11px; color: #93a7cf; line-height: 1.6; }
+.result-achieve { margin: 0 0 14px; display: flex; flex-direction: column; gap: 6px; }
+.ra-item {
+  font-size: 12px; color: #ffe28a; padding: 6px 10px;
+  border: 1px solid rgba(255,226,138,0.45); border-radius: 8px;
+  background: rgba(255,226,138,0.08);
+}
+.lc-stars { display: flex; gap: 3px; margin: 2px 0 4px; font-size: 11px; line-height: 1; }
+.lc-stars .st { color: #6f86b3; opacity: 0.5; }
+.lc-stars .st.on { color: #ffe28a; opacity: 1; text-shadow: 0 0 8px rgba(255,226,138,0.5); }
+.achieve-list {
+  margin-top: 10px; display: flex; flex-direction: column; gap: 6px;
+  max-height: 210px; overflow-y: auto;
+}
+.achieve-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 10px; border-radius: 8px;
+  border: 1px solid rgba(120,160,255,0.18);
+  background: rgba(20,30,55,0.55);
+  opacity: 0.55;
+}
+.achieve-item.unlocked {
+  opacity: 1;
+  border-color: rgba(255,226,138,0.5);
+  background: rgba(60,50,20,0.5);
+}
+.ai-name { font-size: 12px; font-weight: 700; color: #cdd9f3; }
+.achieve-item.unlocked .ai-name { color: #ffe28a; }
+.ai-desc { font-size: 11px; color: #93a7cf; }
+.body-panel {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 64px; display: flex; align-items: center; justify-content: center;
+  gap: 8px; padding: 8px 12px; border-radius: 12px;
+  background: rgba(10,14,26,0.88);
+  border: 1px solid rgba(120,160,255,0.32);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+  flex-wrap: wrap; z-index: 6;
+}
+.bp-name { font-size: 12px; color: #8fb6ff; letter-spacing: .5px; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 520px) {
   .hud { font-size: 12px; gap: 10px; padding: 8px 10px; }
