@@ -31,17 +31,28 @@
   }
   // 当前档位 + 专精的派生参数（唯一口径来自 game.getStarDef，与物理/记账同源）
   function currentDef() {
-    if (typeof game.getStarDef === 'function') return game.getStarDef(selStarType, selStarSpec);
-    const def = (game.STAR_TYPES && game.STAR_TYPES[selStarType]) || { mass: 300, radius: 17, cost: 300 };
-    return { mass: def.mass, radius: def.radius, cost: def.cost, spec: selStarSpec, baseMass: def.mass };
+    return game.getStarDef(selStarType, selStarSpec);
   }
   function currentRadius() { return currentDef().radius; }
-  // 专精选择器状态（按钮高亮 + 参数预览）：全部用 add/remove（测试 stub 无 classList.toggle）
+  // 星体栏各档位的价格标签（v1.12）：随当前专精刷新。
+  // 修复前：按钮恒显示基准价（中行星 150），而实扣按专精价（巨型 180），同屏与 #specPreview 自相矛盾。
+  // 黑洞不参与专精（game.getStarDef 对 blackhole 恒返回基准成本），故同一循环即可覆盖全部档位。
+  const STAR_TIER_KEYS = ['small', 'mid', 'large', 'star', 'blackhole'];
+  function syncStarBarPrices() {
+    for (let i = 0; i < STAR_TIER_KEYS.length; i++) {
+      const key = STAR_TIER_KEYS[i];
+      const el = document.getElementById('starCost-' + key);
+      if (!el) continue;
+      const txt = String(game.getStarDef(key, selStarSpec).cost);
+      if (el.textContent !== txt) el.textContent = txt;   // 先比较再赋值（与既有脏检查风格一致）
+    }
+  }
+  // 专精选择器状态（按钮高亮 + 参数预览 + 星体栏价格）：全部用 add/remove（测试 stub 无 classList.toggle）
   function syncSpecUI() {
     const def = currentDef();
     ['gravity', 'giant'].forEach(id => {
       const btn = document.getElementById('spec-' + id);
-      if (!btn || !btn.classList) return;
+      if (!btn) return;
       const on = (selStarSpec === id);
       if (on) btn.classList.add('selected'); else btn.classList.remove('selected');
     });
@@ -50,6 +61,7 @@
       const txt = def.name + ' · 质量 ' + def.mass + ' · 半径 ' + def.radius + ' · ' + def.cost + ' 星能';
       if (pv.textContent !== txt) pv.textContent = txt;
     }
+    syncStarBarPrices();
   }
 
   // 母星禁放区（与 game.js 同源）—— 通过 game.canPlaceAt 复用单一权威判定
@@ -154,8 +166,7 @@
         : '';
       // 挑战修饰符标签（v1.10）：逐条列出，玩家一眼看到本关的额外限制
       let modsRow = '';
-      let modIds = (selMode === 'challenge' && typeof game.challengeModifiersFor === 'function')
-        ? game.challengeModifiersFor(idx) : [];
+      let modIds = (selMode === 'challenge') ? game.challengeModifiersFor(idx) : [];
       // 隐藏关自带特殊规则（与挑战模式的修饰符同源机制）
       if (selMode === 'campaign' && lv.hidden && Array.isArray(lv.modifiers)) modIds = lv.modifiers.slice();
       if (modIds.length) {
@@ -172,12 +183,12 @@
       // 额外任务徽章（v1.10）：只判不罚的附加目标；已达成点亮
       let taskRow = '';
       if (lv.task && (selMode === 'campaign' || selMode === 'challenge' || selMode === 'daily')) {
-        const done = (typeof game.isTaskDone === 'function') ? game.isTaskDone(selMode, idx) : false;
+        const done = game.isTaskDone(selMode, idx);
         taskRow = `<div class="lc-task${done ? ' done' : ''}">${done ? '✦ 任务已完成' : '✦ 任务'}：${lv.task.text}</div>`;
       }
       // 本关最佳记录（v1.10）：有记录才显示，避免空态噪声
       let recRow = '';
-      const rec = (typeof game.getRecord === 'function') ? game.getRecord(selMode, idx) : null;
+      const rec = game.getRecord(selMode, idx);
       if (rec) {
         recRow = `<div class="lc-record">最佳 ${rec.bestScore} 分 · 最少受击 ${rec.leastHits}`
           + (rec.fastestWin > 0 ? ' · 最快 ' + rec.fastestWin + 's' : '') + '</div>';
@@ -185,7 +196,7 @@
       // 未解锁原因：挑战模式看挑战进度；第四章另需累计星星达标
       let lockMsg = '通关前一关后开启';
       let unlockRow = '';
-      if (selMode === 'campaign' && lv.hidden && typeof game.getHiddenUnlockInfo === 'function') {
+      if (selMode === 'campaign' && lv.hidden) {
         const hu = game.getHiddenUnlockInfo(idx);
         lockMsg = hu ? ('未解锁 · ' + hu.label) : '未解锁 · 需满足解锁条件';
         unlockRow = hu ? `<div class="lc-unlock">${hu.ok ? '已解锁' : '解锁条件：' + hu.label}</div>` : '';
@@ -237,7 +248,7 @@
       hint.textContent = `${lv.name} · ${lv.health} 血 · ${lv.budget} 星能`;
     } else if (selMode === 'challenge') {
       btn.textContent = '开始 · 挑战模式';
-      const mods = (typeof game.challengeModifiersFor === 'function') ? game.challengeModifiersFor(selLevelIndex) : [];
+      const mods = game.challengeModifiersFor(selLevelIndex);
       hint.textContent = `${lv.name} · ${mods.length} 项修饰符 · ${lv.health} 血 · ${lv.budget} 星能`;
     } else if (selMode === 'daily') {
       btn.textContent = '开始 · 每日挑战';
@@ -258,30 +269,28 @@
     if (!el) return;
     const s = game.bestForMode('survival');
     const c = game.getCampaignUnlocked();
-    const e = (typeof game.getBestWaves === 'function') ? game.getBestWaves() : 0;
-    const ch = (typeof game.getChallengeUnlocked === 'function') ? game.getChallengeUnlocked() : 0;
-    const tdone = (typeof game.getTasksDoneCount === 'function') ? game.getTasksDoneCount() : 0;
+    const e = game.getBestWaves();
+    const ch = game.getChallengeUnlocked();
+    const tdone = game.getTasksDoneCount();
     el.innerHTML = `本机记录：生存最佳 ${s > 0 ? s + ' 分' : '—'}　|　闯关已通关 ${c > 0 ? c + ' 关' : '0 关'}`
       + `　|　无尽最高 ${e > 0 ? e + ' 波' : '—'}`
       + `　|　总星数 ${game.getTotalStars()}/${game.totalStarsMax()}`
       + `　|　挑战已通关 ${ch} 关　|　额外任务 ${tdone} 项`;
     // 每日挑战卡片的当日状态（跨日自动刷新，读的是本机日期派生的进度）
     const dailyBest = document.getElementById('dailyBest');
-    if (dailyBest && typeof game.getDailyState === 'function') {
+    if (dailyBest) {
       const d = game.getDailyState();
       const txt = d.cleared ? ('今日已通关 · 最高 ' + d.bestScore + ' 分')
         : (d.bestScore > 0 ? ('今日最高 ' + d.bestScore + ' 分') : '今日未挑战');
       if (dailyBest.textContent !== txt) dailyBest.textContent = txt;
     }
     // 存档异常提示（M7）：菜单遮罩层级高于 .message 轻提示，故直接渲染进菜单区域
-    if (typeof game.takeWarning === 'function') {
-      const w = game.takeWarning();
-      if (w) {
-        const tip = document.createElement('div');
-        tip.className = 'menu-warn';
-        tip.textContent = '⚠ ' + w;
-        el.appendChild(tip);
-      }
+    const w = game.takeWarning();
+    if (w) {
+      const tip = document.createElement('div');
+      tip.className = 'menu-warn';
+      tip.textContent = '⚠ ' + w;
+      el.appendChild(tip);
     }
     renderAchievements();
     renderCollection();
@@ -293,7 +302,7 @@
     const list = document.getElementById('achieveList');
     const title = document.getElementById('achieveTitle');
     const btn = document.getElementById('achieveToggle');
-    if (!list || typeof game.getAchievementList !== 'function') return;
+    if (!list) return;
     const items = game.getAchievementList();
     const done = items.filter(i => i.unlocked).length;
     if (title) title.textContent = `成就（${done}/${items.length}）`;
@@ -337,10 +346,10 @@
     const list = document.getElementById('collectList');
     const title = document.getElementById('collectTitle');
     const btn = document.getElementById('collectToggle');
-    if (!list || typeof game.getStatsTotals !== 'function') return;
+    if (!list) return;
     const html = [];
-    const perfect = (typeof game.isPerfectCollected === 'function') && game.isPerfectCollected();
-    if (perfect && typeof game.getPerfectStory === 'function') {
+    const perfect = game.isPerfectCollected();
+    if (perfect) {
       const ps = game.getPerfectStory();
       if (ps) {
         html.push('<div class="collect-perfect"><div class="cp-title">★ ' + ps.title
@@ -350,19 +359,17 @@
 
     /* --- 1) 收集进度 --- */
     const starMax = game.totalStarsMax();
-    const dist = (typeof game.getStarDistribution === 'function') ? game.getStarDistribution() : null;
+    const dist = game.getStarDistribution();
     const regular = game.regularLevelCount();
-    const hiddenTotal = (typeof game.countHiddenLevels === 'function') ? game.countHiddenLevels() : 0;
-    const hiddenCleared = (typeof game.getHiddenClearedCount === 'function') ? game.getHiddenClearedCount() : 0;
+    const hiddenTotal = game.countHiddenLevels();
+    const hiddenCleared = game.getHiddenClearedCount();
     let hiddenUnlocked = 0;
-    if (typeof game.getHiddenLevels === 'function' && typeof game.isHiddenUnlocked === 'function') {
-      game.getHiddenLevels().forEach(h => { if (game.isHiddenUnlocked(h.index)) hiddenUnlocked++; });
-    }
-    const ach = (typeof game.getAchievementList === 'function') ? game.getAchievementList() : [];
+    game.getHiddenLevels().forEach(h => { if (game.isHiddenUnlocked(h.index)) hiddenUnlocked++; });
+    const ach = game.getAchievementList();
     const achDone = ach.filter(i => i.unlocked).length;
-    const chStars = (typeof game.getChallengeStarsTotal === 'function') ? game.getChallengeStarsTotal() : 0;
-    const chUnlocked = (typeof game.getChallengeUnlocked === 'function') ? game.getChallengeUnlocked() : 0;
-    const d = (typeof game.getDailyState === 'function') ? game.getDailyState() : null;
+    const chStars = game.getChallengeStarsTotal();
+    const chUnlocked = game.getChallengeUnlocked();
+    const d = game.getDailyState();
     const progress = [
       ['闯关星数', game.getTotalStars() + '/' + starMax
         + (dist ? '（3★ ' + dist.three + ' · 2★ ' + dist.two + ' · 1★ ' + dist.one
@@ -378,7 +385,7 @@
 
     /* --- 2) 统计摘要 --- */
     const t = game.getStatsTotals();
-    const modeNames = (typeof game.getBoardModeNames === 'function') ? game.getBoardModeNames() : {};
+    const modeNames = game.getBoardModeNames();
     const modes = (game.BOARD_MODES || []).slice();
     let totalPlays = 0, totalWins = 0;
     modes.forEach(m => { totalPlays += (t.plays[m] || 0); totalWins += (t.wins[m] || 0); });
@@ -464,13 +471,18 @@
       selStarType = o.dataset.star;
       syncSpecUI();                      // 档位变化 → 刷新专精参数预览（质量/半径/价格）
     }));
-    // 专精选择（v1.11）：作用于此后放置与升级的星体；黑洞不参与
-    const specs = bar.querySelectorAll('.spec-opt');
-    specs.forEach(o => o.addEventListener('click', () => {
-      selStarSpec = (o.dataset && o.dataset.spec) || 'gravity';
-      syncSpecUI();
-      flashMessage('专精：' + currentDef().specName + '（' + currentDef().cost + ' 星能）');
-    }));
+    // 专精选择（v1.11）：作用于此后放置与升级的星体；黑洞不参与。
+    // v1.12：改用 id 直取（与 syncSpecUI 的定位方式一致），不再依赖 querySelectorAll —
+    // 后者在测试桩里恒返回空集合，会让专精按钮实际不可交互、也无法被点击链路测试覆盖。
+    ['gravity', 'giant'].forEach(id => {
+      const btn = document.getElementById('spec-' + id);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        selStarSpec = id;
+        syncSpecUI();
+        flashMessage('专精：' + currentDef().specName + '（' + currentDef().cost + ' 星能）');
+      });
+    });
     syncSpecUI();
   }
 
@@ -488,7 +500,7 @@
     btn.textContent = txt;
   }
   function setBtnClass(btn, name, on, cacheKey) {
-    if (!btn || !btn.classList) return;
+    if (!btn) return;
     if (uiCache[cacheKey] === on) return;
     uiCache[cacheKey] = on;
     if (on) btn.classList.add(name); else btn.classList.remove(name);
@@ -497,7 +509,7 @@
     const st = game.state;
     // 减速额度（P0-1）：正常态显示剩余秒数、减速中显示小数、低额度转琥珀、耗尽提示
     const slowBtn = ui('slowBtn');
-    if (slowBtn && typeof game.slowMotionState === 'function') {
+    if (slowBtn) {
       const sm = game.slowMotionState();
       const slowed = st.timeScale < 1;
       const txt = sm.disabled
@@ -512,7 +524,7 @@
     }
     // 撤销（P0-2）：无可用历史时置灰
     const undoBtn = ui('undoBtn');
-    if (undoBtn && typeof game.canUndo === 'function') {
+    if (undoBtn) {
       const can = game.canUndo();
       const dis = !can.ok;
       if (uiCache.undoDisabled !== dis) {
@@ -541,7 +553,7 @@
   // 避免主循环每帧遍历波次数组与写 DOM。
   function syncWavePreview() {
     const st = game.state;
-    const key = (st.gameStarted && !st.gameOver && typeof game.getWavePreview === 'function')
+    const key = (st.gameStarted && !st.gameOver)
       ? (st.mode + ':' + st.levelIndex + ':' + st.wave)
       : 'off';
     if (uiCache.wpKey === key) return;
@@ -549,8 +561,8 @@
     const box = ui('wavePreview');
     const body = ui('wavePreviewBody');
     if (!box || !body) return;
-    const pv = (typeof game.getWavePreview === 'function') ? game.getWavePreview() : null;
-    if (!pv || !pv.available) {
+    const pv = game.getWavePreview();
+    if (!pv.available) {
       if (box.style.display !== 'none') box.style.display = 'none';
       return;
     }
@@ -611,13 +623,13 @@
   // 激活流程：点击道具槽选中 → 在画布上点击释放（与放置星体、点选星体互斥）→ Esc 取消
   let selProp = null;
   function propNameOf(id) {
-    const list = (typeof game.getProps === 'function') ? game.getProps() : [];
+    const list = game.getProps();
     const hit = list.filter(p => p.id === id)[0];
     return hit ? hit.name : id;
   }
   function syncPropBar() {
     const bar = ui('propBar');
-    if (!bar || typeof game.getProps !== 'function') return;
+    if (!bar) return;
     const list = game.getProps();
     for (const p of list) {
       const cnt = ui('propCount-' + p.id);
@@ -639,10 +651,9 @@
   function bindPropBar() {
     const bar = document.getElementById('propBar');
     if (!bar) return;
-    const opts = (bar.querySelectorAll ? bar.querySelectorAll('.prop-opt') : []);
-    if (!opts || !opts.forEach) return;
+    const opts = bar.querySelectorAll('.prop-opt');
     opts.forEach(o => o.addEventListener('click', () => {
-      const id = o.dataset ? o.dataset.prop : null;
+      const id = o.dataset.prop;
       if (!id) return;
       const count = (game.state.props && game.state.props[id]) || 0;
       if (count <= 0) { flashMessage('「' + propNameOf(id) + '」已用完'); return; }
@@ -687,7 +698,7 @@
     const cl = document.getElementById('bpClose');
     if (sw) sw.addEventListener('click', () => {
       const sel = game.state.selectedBody;
-      if (!sel || typeof game.switchSpec !== 'function') return;
+      if (!sel) return;
       const info = game.getBodyActionInfo(sel);
       const r = game.switchSpec(sel, info && info.switchName === '巨型' ? 'giant' : 'gravity');
       if (r && r.ok) {
@@ -959,7 +970,7 @@
       syncPropBar();
       return;
     }
-    if (clicked && typeof game.selectBodyAt === 'function') {
+    if (clicked) {
       const hit = game.selectBodyAt(p);
       if (hit && hit.ok) {
         audio.play('place');
@@ -986,8 +997,8 @@
   // ===== 结算面板 =====
   function showResult(reason) {
     const s = game.getCurrentRunStats();
-    // 固定波次模式（闯关/挑战/每日）在标题、文案、波次行上口径一致
-    const fixedWave = (s.mode === 'campaign' || s.mode === 'challenge' || s.mode === 'daily');
+    // 固定波次模式（闯关/挑战/每日）在标题、文案、波次行上口径一致 —— 判定复用规则层单一真源
+    const fixedWave = game.isFixedWaveMode(s.mode);
     const title = document.getElementById('resultTitle');
     const sub = document.getElementById('resultSubtitle');
     const rsWavesItem = document.getElementById('rsWavesItem');
@@ -1086,8 +1097,8 @@
     // 本次新解锁的成就（P1-C）：队列一次性取走，避免重复提示
     const achBox = document.getElementById('resultAchieve');
     if (achBox) {
-      const news = (typeof game.takeNewAchievements === 'function') ? game.takeNewAchievements() : [];
-      if (news && news.length) {
+      const news = game.takeNewAchievements();
+      if (news.length) {
         achBox.style.display = '';
         achBox.innerHTML = news.map(a => `<div class="ra-item">🏆 成就解锁 · ${a.name} —— ${a.desc}</div>`).join('');
         audio.play('place');
@@ -1159,7 +1170,7 @@
     const boardBox = document.getElementById('resultBoard');
     if (boardBox) {
       const br = game.state.lastBoardRank;
-      const modeNames = (typeof game.getBoardModeNames === 'function') ? game.getBoardModeNames() : {};
+      const modeNames = game.getBoardModeNames();
       if (br && Number.isFinite(br.rank) && br.rank > 0 && br.entry) {
         boardBox.className = 'result-board new';
         boardBox.textContent = '★ 进入' + (modeNames[br.mode] || br.mode) + '榜第 ' + br.rank + ' 名'
@@ -1171,10 +1182,18 @@
         boardBox.textContent = '';
       }
     }
-    // 结算面板「下一关」按钮：闯关/挑战通关且下一关已解锁时可继续
+    // 结算面板「下一关」按钮（v1.12）：只依据"下一关**确实存在于本模式的关卡池里**"。
+    //   · 闯关：非隐藏关（隐藏关是独立挑战关，没有"下一关"语义）且 索引+1 < 闯关池长度（42）
+    //   · 挑战：索引+1 < 挑战池长度（40）→ 通关第 40 关后按钮自动消失
+    // 旧实现只判模式（campaign/challenge 一律显示），于是挑战末关留下死链、隐藏关还会弹出
+    // 与之无关的"第四章还需累计星星"提示。
+    // 刻意**不判解锁状态**：解锁由点击分支给出提示；若在此判解锁，会在"通关但解锁进度尚未推进"
+    // 的场景下误隐藏按钮（既有断言依赖该场景可见）。
     const nextBtn = document.getElementById('resultNext');
     if (nextBtn) {
-      const canNext = reason === 'win' && (s.mode === 'campaign' || s.mode === 'challenge');
+      const pool = (s.mode === 'campaign' || s.mode === 'challenge') ? game.getLevelsForMode(s.mode) : [];
+      const canNext = reason === 'win' && !game.isHiddenLevel(s.levelIndex)
+        && (s.levelIndex + 1) < pool.length;
       nextBtn.style.display = canNext ? '' : 'none';
     }
     // 固定波次模式与无尽显示"撑过波次"（无尽模式下它是核心成绩），生存模式隐藏
@@ -1239,7 +1258,7 @@
         if (mode !== 'campaign') return;
         if (game.isLevelUnlocked(nextIdx)) {
           game.startGame({ mode: 'campaign', levelIndex: nextIdx });
-        } else if (nextIdx >= 30) {
+        } else if (nextIdx >= game.CH4_START) {
           flashMessage('第四章还需累计星星达 ' + game.getCh4StarGate() + '（当前 ' + game.getTotalStars() + '）');
         } else {
           flashMessage('请先通关当前关以解锁下一关');
@@ -1327,10 +1346,8 @@
       window.__activeProp = (selProp && hoverPoint)
         ? { id: selProp, x: hoverPoint.x, y: hoverPoint.y }
         : null;
-      if (typeof game.takeNotice === 'function') {
-        const notice = game.takeNotice();
-        if (notice) flashMessage(notice);
-      }
+      const notice = game.takeNotice();
+      if (notice) flashMessage(notice);
       loopErrorStreak = 0;                 // 本帧正常 → 连续异常计数清零
     } catch (err) {
       loopErrorStreak++;

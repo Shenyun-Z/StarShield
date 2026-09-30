@@ -66,11 +66,12 @@
     <!-- 星体选择栏：默认隐藏，游戏开始后显示 -->
     <div id="starBar" class="star-bar hidden">
       <span class="star-bar-label">放置：</span>
-      <button class="star-opt" data-star="small">小行星<small>50</small></button>
-      <button class="star-opt" data-star="mid">中行星<small>150</small></button>
-      <button class="star-opt selected" data-star="large">大行星<small>300</small></button>
-      <button class="star-opt" data-star="star">恒星<small>500</small></button>
-      <button class="star-opt bh" data-star="blackhole">黑洞<small>1500</small></button>
+      <!-- 价格标签由 JS 按当前专精刷新（id 供 syncStarBarPrices 定位）；静态文本是"未执行脚本"时的兜底基准价 -->
+      <button class="star-opt" data-star="small">小行星<small id="starCost-small">50</small></button>
+      <button class="star-opt" data-star="mid">中行星<small id="starCost-mid">150</small></button>
+      <button class="star-opt selected" data-star="large">大行星<small id="starCost-large">300</small></button>
+      <button class="star-opt" data-star="star">恒星<small id="starCost-star">500</small></button>
+      <button class="star-opt bh" data-star="blackhole">黑洞<small id="starCost-blackhole">1500</small></button>
       <!-- 星体专精（v1.11）：引力型 = 基准值；巨型 = 碰撞面大 50%、引力弱 20%、贵 20% -->
       <span class="star-bar-label spec-label">专精：</span>
       <button id="spec-gravity" class="spec-opt selected" data-spec="gravity">引力型<small>标准</small></button>

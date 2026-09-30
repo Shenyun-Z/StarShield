@@ -128,11 +128,9 @@
   ];
   // 闯关模式关卡：使用 levels-campaign.js 提供的确定性配置（保证公平、可复现、
   // 层层递进）。所有用户加载同一份数据将得到完全一致的波次序列。
-  const CAMPAIGN_LEVELS = (typeof window !== 'undefined' && window.CAMPAIGN_LEVELS)
-    ? window.CAMPAIGN_LEVELS
-    : (typeof window !== 'undefined' && window.EXTREME_LEVELS ? window.EXTREME_LEVELS : []);
-  // 章节划分（3 章 × 10 关）：菜单按章分组并显示该章星数完成度（数据来自 levels-campaign.js）
-  const CHAPTERS = (typeof window !== 'undefined' && window.CHAPTERS) ? window.CHAPTERS : [];
+  const CAMPAIGN_LEVELS = window.CAMPAIGN_LEVELS || [];
+  // 章节划分（4 章 × 10 关）：菜单按章分组并显示该章星数完成度（数据来自 levels-campaign.js）
+  const CHAPTERS = window.CHAPTERS || [];
   // 无尽模式：复用生存模式最高强度档的波次参数（随机生成），去掉限时 → 波次无上限。
   // 本机记录：最高波数走 starshield_best_waves（bestWaves），分数沿用 bestScore。
   const ENDLESS_LEVEL = {
@@ -380,9 +378,8 @@
   }
   function getTotalStars() {
     let sum = 0;
-    for (const k in stars) {
-      if (Object.prototype.hasOwnProperty.call(stars, k)) sum += stars[k];
-    }
+    // stars 是本模块自建的 Object.create(null) 表（键只来自本模块与 JSON.parse），无原型链，无需 hasOwnProperty
+    for (const k of Object.keys(stars)) sum += stars[k];
     return sum;
   }
   // 满星上限只统计**常规关**：隐藏关不计星，因此加入隐藏关后满星仍为 40 × 3 = 120。
@@ -934,13 +931,16 @@
       setWarning('挑战存档已损坏，已回退为空进度');   // 损坏不静默（M7 口径）
       return out;
     }
-    out.unlocked = clampInt(obj.unlocked, 0, CAMPAIGN_LEVELS.length);
+    // 挑战模式的关卡池是 40 个常规关（REGULAR_LEVELS，**不含隐藏关**）：
+    // unlocked 允许等于池长度（表示"40 关已全部通关"），但索引必须 < 池长度才可进入。
+    // 旧实现误用 CAMPAIGN_LEVELS.length（42），会让篡改后的存档解锁不存在的索引 40/41。
+    out.unlocked = clampInt(obj.unlocked, 0, REGULAR_LEVELS.length);
     if (obj.stars && typeof obj.stars === 'object') {
       for (const k in obj.stars) {
         if (!Object.prototype.hasOwnProperty.call(obj.stars, k)) continue;
         const idx = parseInt(k, 10);
         const v = parseInt(obj.stars[k], 10);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= CAMPAIGN_LEVELS.length) continue;
+        if (!Number.isFinite(idx) || idx < 0 || idx >= REGULAR_LEVELS.length) continue;
         if (!Number.isFinite(v) || v <= 0) continue;
         out.stars[String(idx)] = clamp(v, 1, STAR_MAX_PER_LEVEL);
       }
@@ -950,7 +950,7 @@
         if (!Object.prototype.hasOwnProperty.call(obj.best, k)) continue;
         const idx = parseInt(k, 10);
         const v = obj.best[k];
-        if (!Number.isFinite(idx) || idx < 0 || idx >= CAMPAIGN_LEVELS.length) continue;
+        if (!Number.isFinite(idx) || idx < 0 || idx >= REGULAR_LEVELS.length) continue;
         if (!v || typeof v !== 'object') continue;
         out.best[String(idx)] = {
           bestScore: Math.max(0, Math.round(Number(v.bestScore) || 0)),
@@ -974,14 +974,20 @@
     catch (e) { setWarning('挑战存档保存失败：本地存储不可用或已满'); return false; }
   }
   function getChallengeUnlocked() { return challenge.unlocked; }
+  // 挑战可进入的索引必须**同时**满足：在已解锁进度内，且落在挑战关卡池内（0..39）。
+  // 实测缺陷（v1.12 修复）：旧实现只判 `i <= challenge.unlocked`，而 unlockNextChallenge 用
+  // CAMPAIGN_LEVELS.length(42) 作上界 → 通关第 40 关后 unlocked=40，isChallengeUnlocked(40) 为 true，
+  // 结算面板「下一关」据此调用 startGame(40) → 关卡池只有 0..39 → 静默失败（点了没反应）。
   function isChallengeUnlocked(idx) {
     const i = parseInt(idx, 10);
-    return Number.isFinite(i) && i >= 0 && i <= challenge.unlocked;
+    return Number.isFinite(i) && i >= 0 && i < REGULAR_LEVELS.length && i <= challenge.unlocked;
   }
   function unlockNextChallenge() {
     if (state.mode !== 'challenge') return;
     const next = state.levelIndex + 1;
-    if (next > challenge.unlocked && next < CAMPAIGN_LEVELS.length) {
+    // 允许 unlocked 推进到池长度（= 40，表示"挑战 40 关已全部通关"，bestDisplay 文案据此显示），
+    // 但不得超过池长度（索引 40/41 在挑战池里并不存在，属越界进度）。
+    if (next > challenge.unlocked && next <= REGULAR_LEVELS.length) {
       challenge.unlocked = next;
       saveChallenge();
     }
@@ -992,9 +998,7 @@
   }
   function getChallengeStarsTotal() {
     let sum = 0;
-    for (const k in challenge.stars) {
-      if (Object.prototype.hasOwnProperty.call(challenge.stars, k)) sum += challenge.stars[k];
-    }
+    for (const k of Object.keys(challenge.stars)) sum += challenge.stars[k];
     return sum;
   }
   // 挑战成绩与闯关共用同一套择优逻辑，但落在独立的 best 表里
@@ -1103,12 +1107,9 @@
   function getDailyLevel() {
     const key = getDailyKey();
     if (dailyCache && dailyCache.key === key) return dailyCache.level;
-    const maker = (typeof window !== 'undefined' && typeof window.makeDailyChallenge === 'function')
-      ? window.makeDailyChallenge : null;
     let level = null;
-    if (maker) {
-      try { level = maker(key); } catch (e) { level = null; }
-    }
+    // levels-campaign.js 恒定导出 makeDailyChallenge；try/catch 保留（生成器异常时回退空关卡并提示）
+    try { level = window.makeDailyChallenge(key); } catch (e) { level = null; }
     if (!level) setWarning('每日挑战关卡生成失败');
     dailyCache = { key: key, level: level };
     return level;
@@ -1559,8 +1560,10 @@
     state.lastBoardRank = null;  // v1.11：榜单名次逐局重置
 
     // 减速额度 / 撤销历史 / 预警列表（P0-1 / P0-2 / P0-3）：每局从零开始。
-    // 注意：timeScale 属会话级偏好，开局不重置（由额度耗尽机制兜底），
-    // 避免与「直写 state.timeScale」的既有行为分叉。
+    // v1.12 行为变更：时间流速**每局复位为常速**。旧实现把 timeScale 当会话级偏好、开局不重置，
+    // 于是"在 0.25× 下结束本局 → 新一局开局即慢动作"，并与每局复位的 slowQuota 组合成
+    // "静默消耗新一局减速额度"的不一致状态。现在额度与流速同口径：都从零开始。
+    state.timeScale = 1;
     state.slowQuota = hasModifier('noSlow') ? 0 : SLOW_QUOTA_MAX;
     state.gameTime = 0;
     state.placeHistory = [];
@@ -1783,7 +1786,6 @@
   }
   function canUndo() {
     if (!state.gameStarted || state.gameOver) return { ok: false, reason: '' };
-    if (!Array.isArray(state.placeHistory)) return { ok: false, reason: '' };
     prunePlaceHistory();
     const entry = state.placeHistory[state.placeHistory.length - 1];
     if (!entry) return { ok: false, reason: '' };
@@ -1791,7 +1793,6 @@
   }
   function undoLastPlacement() {
     if (!state.gameStarted || state.gameOver) return { ok: false, reason: '当前无法撤销' };
-    if (!Array.isArray(state.placeHistory)) return { ok: false, reason: '没有可撤销的放置' };
     prunePlaceHistory();
     const entry = state.placeHistory.pop();
     if (!entry) return { ok: false, reason: '没有可撤销的放置（仅可撤销最近 5 秒内放置且仍在场上的星体）' };
@@ -2326,7 +2327,7 @@
   function getRunEnding() {
     if (state.endReason !== 'win' || state.mode !== 'campaign') return null;
     if (!state.level) return null;
-    const story = (typeof window !== 'undefined') ? window.STORY : null;
+    const story = window.STORY;
     if (isHiddenLevel()) {
       const def = (story && story.hidden) ? story.hidden[state.level.id] : null;
       return def ? { id: state.level.id, title: def.title, text: def.text } : null;
@@ -2337,7 +2338,7 @@
     return { id: ch.id, title: ch.ending.title, text: ch.ending.text };
   }
   function getPerfectStory() {
-    const story = (typeof window !== 'undefined') ? window.STORY : null;
+    const story = window.STORY;
     return (story && story.perfect) ? { title: story.perfect.title, text: story.perfect.text } : null;
   }
   // 100% 收集：满星 + 常规关任务全清 + 隐藏关全清（星图总览面板据此显示收束文案）
@@ -2835,22 +2836,28 @@
 
   // ===== 开始游戏 =====
   function startGame(opts) {
-    // 兼容/防御：允许不传或误传非对象（历史调用曾有 startGame('survival', 0)）
-    const o = (opts && typeof opts === 'object') ? opts : (typeof opts === 'string' ? { mode: opts } : {});
+    // 允许不传或误传非对象（历史调用曾有 startGame('survival', 0) 这种顺序错误）→ 退回默认开头
+    const o = (opts && typeof opts === 'object') ? opts : {};
     clearHudCache();
     stepAccumulator = 0;        // 丢弃上一局残留的时间片
-    state.mode = o.mode || 'survival';
-    state.levelIndex = o.levelIndex || 0;
+    // 校验一律前置：**先在局部量上判定，全部通过后才提交 state**。
+    // 否则被拒绝的开局会把 state.mode / state.levelIndex 写成脏值，
+    // 而后续「再来一局」等入口都从 state 读取索引 → 一局失败会连带后续开局一起失效。
+    const mode = o.mode || 'survival';
+    const idx = o.levelIndex || 0;
     // 解锁校验：闯关按通关进度（第四章另加累计星星门槛）；挑战模式有独立的挑战进度
-    if (state.mode === 'campaign' && !isLevelUnlocked(state.levelIndex)) {
+    if (mode === 'campaign' && !isLevelUnlocked(idx)) {
       return false;
     }
-    if (state.mode === 'challenge' && !isChallengeUnlocked(state.levelIndex)) {
+    if (mode === 'challenge' && !isChallengeUnlocked(idx)) {
       return false;
     }
-    const levels = getLevelsForMode(state.mode);
-    if (!levels[state.levelIndex]) return false;
-    state.level = levels[state.levelIndex];
+    const levels = getLevelsForMode(mode);
+    const lvl = levels[idx];
+    if (!lvl) return false;               // 关卡不存在（含越界索引）→ 拒绝开局且不留副作用
+    state.mode = mode;
+    state.levelIndex = idx;
+    state.level = lvl;
     state.gameStarted = true;
     // 每局都从零开始：场上只有母星，所有星体由玩家自行摆放（不存在预设布防）
     setupLevel();
@@ -3091,7 +3098,6 @@
     getWaveParams: waveParams,
     BOARD_SIZE,
     BOARD_MODES,
-    BOARD_MODE_NAMES,
     loadStats,
     getStatsTotals,
     getBoards,
@@ -3121,6 +3127,7 @@
     getDailyLevel,
     getWavePreview,
     getCh4StarGate,
+    CH4_START,
     // P1-C 成就
     loadAchievements,
     saveAchievements,

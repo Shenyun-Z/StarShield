@@ -110,7 +110,8 @@ const DT = 1 / 60;
 const WIN_W = 1280, WIN_H = 720;
 const planetAt = () => game.state.bodies[0];
 const near = (a, b, eps) => Math.abs(a - b) <= (eps == null ? 1e-9 : eps);
-// timeScale / showHint 是会话级偏好，startGame 不重置；测试统一复位以保证步进确定性
+// timeScale 自 v1.12 起由 setupLevel 每局复位为 1×，此处仍显式复位以保证步进确定性；
+// 「开局即常速」的行为断言在 test/result-actions.test.js。showHint 仍是会话级偏好（starshield_settings）。
 function newGame(opts) {
   const r = game.startGame(opts);
   game.state.timeScale = 1;

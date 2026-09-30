@@ -128,8 +128,7 @@ const predictorRenderer = (function () {
     if (typeof predictor === 'undefined' || !predictor) return;
     if (!ready()) return;
     const planet = state.bodies[0];
-    if (!planet) return;
-    if (!state.bodies || state.bodies.length === 0) return;
+    if (!planet) return;                     // 空数组/无母星时上面已返回，长度判定属冗余
     const wantHint = !!state.showHint;
     const wantWarn = !!state.showWarnings;
     if (!wantHint && !wantWarn) return;        // 两者都关闭 → 完全不积分
