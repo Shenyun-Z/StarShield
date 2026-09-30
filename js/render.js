@@ -374,6 +374,33 @@
       ctx.arc(sel.x, sel.y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
+
+      // 布局协同范围与加成（v1.11）：选中玩家星体时显示其协同判定半径与当前加成。
+      // 只读 body 上的 synergy* 字段（由 physics 每步写入），不在此处做任何物理计算。
+      if (sel.type === 'star' && Number.isFinite(sel.synergyMul) && sel.synergyBonus > 0
+          && typeof physics !== 'undefined' && physics.SYNERGY_RADIUS) {
+        const pct = Math.round(sel.synergyBonus * 100);
+        const r2 = physics.SYNERGY_RADIUS;
+        ctx.save();
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = 'rgba(111,227,155,0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(sel.x, sel.y, r2, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const label = '协同 +' + pct + '%';
+        const ly = sel.y - (sel.radius || 12) - 12;
+        ctx.font = '600 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(5,7,13,0.85)';
+        ctx.strokeText(label, sel.x, ly);
+        ctx.fillStyle = '#6fe39b';
+        ctx.fillText(label, sel.x, ly);
+        ctx.restore();
+      }
     }
 
     // 拖放预测线（先把 placingStars 注入当前系统，模拟其轨迹）

@@ -343,7 +343,9 @@ console.log('--- P1-B 回收与升级 ---');
 console.log('--- P1-C 成就系统 ---');
 {
   const list = game.getAchievementList();
-  assert('成就数量在 12-15 之间', list.length >= 12 && list.length <= 15, 'n=' + list.length);
+  // v1.12：成就由 14 项扩到 26 项（新增专精/协同/每日/隐藏关/任务全清/无尽风暴/挑战/完美收集）
+  assert('成就数量在 24-30 之间', list.length >= 24 && list.length <= 30, 'n=' + list.length);
+  assert('成就列表与定义数量一致', list.length === game.ACHIEVEMENTS.length);
   const ids = list.map(a => a.id);
   assert('成就 id 唯一', new Set(ids).size === ids.length);
   assert('每项成就含名称与描述', list.every(a => a.name && a.desc));

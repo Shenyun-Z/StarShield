@@ -340,9 +340,10 @@ console.log('--- 7. 无尽模式与章节化 ---');
 }
 {
   const chapters = game.CHAPTERS;
-  assert('章节数为 4 且覆盖全部 40 关',
+  const regularLevels = game.CAMPAIGN_LEVELS.filter(l => !l.hidden);
+  assert('章节数为 4 且覆盖全部 40 个常规关',
     chapters.length === 4 && chapters[0].from === 0
-    && chapters[chapters.length - 1].to === game.CAMPAIGN_LEVELS.length - 1);
+    && chapters[chapters.length - 1].to === regularLevels.length - 1);
   assert('每章含剧情文案（极简叙事，供章首关横幅展示）',
     chapters.every(c => typeof c.story === 'string' && c.story.length > 8));
   let contiguous = true;
@@ -350,8 +351,10 @@ console.log('--- 7. 无尽模式与章节化 ---');
     if (chapters[i].from !== chapters[i - 1].to + 1) contiguous = false;
   }
   assert('章节区间连续无空洞', contiguous);
-  assert('每关都属于且仅属于一个章节',
-    game.CAMPAIGN_LEVELS.every((lv, idx) => chapters.filter(c => idx >= c.from && idx <= c.to).length === 1));
+  assert('每个常规关都属于且仅属于一个章节（隐藏关不属任何章节）',
+    game.CAMPAIGN_LEVELS.every((lv, idx) => lv.hidden
+      ? chapters.filter(c => idx >= c.from && idx <= c.to).length === 0
+      : chapters.filter(c => idx >= c.from && idx <= c.to).length === 1));
 }
 
 console.log(ok ? '\n=== P2 系统（类型/场景/Boss/分裂/干扰/道具/无尽/章节）测试全部通过 ==='

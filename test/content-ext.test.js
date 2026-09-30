@@ -1,5 +1,5 @@
 // v1.10 内容扩展测试套件（保卫萝卜式 · 纯单机）
-//   A. 旧 30 关零改动：与 test/fixtures/campaign-v19.json 基线逐字段比对（新增 task 字段除外）
+//   A. 关卡零改动：与 test/fixtures/campaign-v1.11.json 基线逐字段比对（42 关全覆盖）
 //   B. 第四章：40 关 / 4 章 / 参数合法与递增 / 场景白名单
 //   C. 挑战模式：修饰符确定性挂载 + 5 个拦截点（禁道具/来袭加速/星能减半/禁黑洞/禁回收升级/禁减速）
 //   D. 每日挑战：同日确定、跨日不同、独立存档、跨日自动重置
@@ -114,16 +114,15 @@ function winCurrentLevel(st) {
 /* ============ A. 旧 30 关零改动（基线 fixture） ============ */
 console.log('--- A. 旧 30 关零改动（基线比对）---');
 {
-  const base = JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures/campaign-v19.json'), 'utf8'));
+  const baseline = JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures/campaign-v1.11.json'), 'utf8'));
+  const prevBase = JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures/campaign-v1.10.json'), 'utf8'));
   const levels = game.CAMPAIGN_LEVELS;
-  assert('关卡总数为 40（前 30 关 + 第四章 10 关）', levels.length === 40, 'n=' + levels.length);
-  assert('章节为 4 章且连续覆盖 40 关',
+  assert('关卡总数为 42（40 常规关 + 2 隐藏关）', levels.length === 42, 'n=' + levels.length);
+  assert('章节为 4 章且连续覆盖 40 个常规关',
     game.CHAPTERS.length === 4
     && game.CHAPTERS.every((c, i) => (i === 0 || c.from === game.CHAPTERS[i - 1].to + 1))
     && game.CHAPTERS[3].to === 39);
 
-  // 逐字段比对：task 是 v1.10 新增字段，比对时排除
-  function strip(lv) { const c = Object.assign({}, lv); delete c.task; return c; }
   function deepEqual(x, y) {
     if (x === y) return true;
     if (typeof x !== typeof y) return false;
@@ -137,32 +136,41 @@ console.log('--- A. 旧 30 关零改动（基线比对）---');
     return false;
   }
   let firstBad = -1;
-  for (let i = 0; i < 30; i++) {
-    if (!deepEqual(strip(levels[i]), base.levels[i])) { firstBad = i + 1; break; }
+  for (let i = 0; i < levels.length; i++) {
+    if (!deepEqual(levels[i], baseline.levels[i])) { firstBad = i + 1; break; }
   }
-  assert('前 30 关与 v1.9 基线逐字段一致（数值/波次/文案零改动）', firstBad < 0,
+  assert('42 关与 v1.11 基线逐字段一致（重校准后仍完全确定性）', firstBad < 0,
     firstBad > 0 ? ('首个不一致：第 ' + firstBad + ' 关') : '');
-  assert('基线章节（3 章）仍为前 3 章',
-    base.chapters.length === 3
-    && game.CHAPTERS.slice(0, 3).every((c, i) => c.from === base.chapters[i].from && c.to === base.chapters[i].to));
+
+  // 重校准方向性：新版本不得让任何常规关变简单（难度与波数均不低于 v1.10）
+  let dirBad = -1;
+  for (let i = 0; i < 40; i++) {
+    if (levels[i].difficulty < prevBase.levels[i].difficulty - 1e-9
+        || levels[i].waves.length < prevBase.levels[i].waves.length) { dirBad = i + 1; break; }
+  }
+  assert('重校准方向性：逐关难度与波数均不低于 v1.10', dirBad < 0,
+    dirBad > 0 ? ('第 ' + dirBad + ' 关低于旧值') : '');
+  assert('隐藏关在第 4 章之后追加（不改动既有 40 关的顺序与索引）',
+    levels.slice(40).every(l => l.hidden) && levels.slice(0, 40).every(l => !l.hidden));
 }
 
 /* ============ B. 第四章参数合法性与递增 ============ */
 console.log('--- B. 第四章（31-40 关）---');
 {
   const levels = game.CAMPAIGN_LEVELS;
+  const reg = levels.filter(l => !l.hidden);
   let diffMono = true, waveMono = true;
-  for (let i = 1; i < levels.length; i++) {
-    if (!(levels[i].difficulty > levels[i - 1].difficulty - 1e-9)) diffMono = false;
-    if (levels[i].waves.length < levels[i - 1].waves.length) waveMono = false;
+  for (let i = 1; i < reg.length; i++) {
+    if (!(reg[i].difficulty > reg[i - 1].difficulty - 1e-9)) diffMono = false;
+    if (reg[i].waves.length < reg[i - 1].waves.length) waveMono = false;
   }
-  assert('全 40 关难度严格递增（无平台期）', diffMono);
-  assert('全 40 关波数非递减（含 Boss 波与第四章衔接）', waveMono,
-    'L30=' + levels[29].waves.length + ' L31=' + levels[30].waves.length
-    + ' L40=' + levels[39].waves.length);
+  assert('常规 40 关难度严格递增（无平台期）', diffMono);
+  assert('常规 40 关波数非递减（含 Boss 波与第四章衔接）', waveMono,
+    'L30=' + reg[29].waves.length + ' L31=' + reg[30].waves.length
+    + ' L40=' + reg[39].waves.length);
   assert('第四章血量 ≥ 16 且不高于首关',
-    levels.slice(30).every(l => l.health >= 16) && levels[29].health >= levels[39].health);
-  assert('第四章星能 ≥ 大行星成本（300）', levels.slice(30).every(l => l.budget >= 300));
+    reg.slice(30).every(l => l.health >= 16) && reg[29].health >= reg[39].health);
+  assert('第四章星能 ≥ 大行星成本（300）', reg.slice(30).every(l => l.budget >= 300));
   assert('第四章含两处 Boss 关（第 35 / 40 关）',
     levels[34].waves[levels[34].waves.length - 1].spawns.some(s => s.kind === 'boss')
     && levels[39].waves[levels[39].waves.length - 1].spawns.some(s => s.kind === 'boss'));

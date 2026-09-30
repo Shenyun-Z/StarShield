@@ -85,7 +85,7 @@
 
   // 前 30 关（v1.9 已发布内容）的难度分母。**必须冻结**：难度进度 t = i / (LEGACY_N - 1)，
   // 若改成 i / (N - 1)，前 30 关的 t 会整体变小，血量/星能/波数/波次构成与 rng 抽取序列
-  // 全部漂移（见 test/fixtures/campaign-v19.json 的基线断言）。
+  // 全部漂移（见 test/fixtures/campaign-v1.11.json 的基线断言）。
   const LEGACY_N = 30;
   const N = 40; // 总关卡数（前 30 关 + 第四章 10 关）
 
@@ -145,38 +145,46 @@
     // 承接第 30 关的强度继续上升：血量 20→16、星能 370→300、波数 26→30、
     // 难度 1.48→1.90（严格递增、两位小数不并列）、彗星 0.50→0.60、
     // 分裂彗星 0.16→0.22、干扰体 0.12→0.18。
-    // 母星血量：前 30 关 30 → 20 渐降；第四章 20 → 16 渐降
+    // ===== v1.11 强度重校准（因新增专精与布局协同）=====
+    // 玩家的新增实力主要来自**布局协同**（邻近星体叠加、靠近机关借力，最多 +40% 引力），
+    // 而默认专精「引力型」在数值上与历史完全一致（见 physics.SPECS）。因此这里的上调幅度
+    // 按"协同的典型收益"校准：越靠后的关卡（玩家星体越多、越容易形成协同）上调越明显。
+    // intensity：前 30 关 1.00 → 1.12；第四章 1.18 → 1.26（作用于来袭速度与质量）
+    const intensity = isCh4 ? (1.18 + t2 * 0.08) : (1 + t * 0.12);
+    // 母星血量：前 30 关 30 → 18 渐降；第四章 18 → 16 渐降
     const health = isCh4
-      ? Math.round(clamp(20 - t2 * 4, 16, 20))
-      : Math.round(clamp(30 - t * 10, 20, 30));
-    // 星能预算：前 30 关 620 → 370；第四章 370 → 300（下界仍不低于一颗大行星 300）
+      ? Math.round(clamp(18 - t2 * 2, 16, 18))
+      : Math.round(clamp(30 - t * 12, 18, 30));
+    // 星能预算：前 30 关 620 → 360；第四章 360 → 300（下界仍不低于一颗大行星 300）
     const budget = isCh4
-      ? Math.round(clamp(370 - t2 * 70, 300, 370))
-      : Math.round(clamp(620 - t * 250, 370, 620));
-    // 波次数：前 30 关 9 → 26；第四章 26 → 29
+      ? Math.round(clamp(360 - t2 * 60, 300, 360))
+      : Math.round(clamp(620 - t * 260, 360, 620));
+    // 波次数：前 30 关 9 → 27；第四章 27 → 30
     let waveCount = isCh4
-      ? Math.round(clamp(26 + t2 * 3, 26, 29))
-      : Math.round(clamp(9 + t * 17, 9, 26));
+      ? Math.round(clamp(27 + t2 * 3, 27, 30))
+      : Math.round(clamp(9 + t * 18, 9, 27));
     const isBossLevel = ((i + 1) % 5 === 0);
-    // 第四章单调性保护（硬约束）：本关总波数（含可能的 Boss 收尾波）不得少于上一关。
-    // 否则第 35/40 关的 Boss 波会让紧随其后的关卡出现"波数倒退"（测试断言波数非递减）。
-    if (isCh4) waveCount = Math.max(waveCount, prevTotalWaves - (isBossLevel ? 1 : 0));
+    // 波数单调性保护（硬约束，作用于全部关卡）：本关总波数（含可能的 Boss 收尾波）
+    // 不得少于上一关。Boss 波会给第 5/10/15… 关额外 +1 波，若不保护，
+    // 紧随其后的关卡会出现"波数倒退"（测试断言波数非递减）。
+    waveCount = Math.max(waveCount, prevTotalWaves - (isBossLevel ? 1 : 0));
     // 全局难度系数（喂给 spawnThreat 计算速度与质量）
     const difficulty = isCh4
-      ? Number((1.48 + t2 * 0.42).toFixed(2))     // 1.48 → 1.90
-      : Number((0.5 + t * 0.95).toFixed(2));      // 0.50 → 1.45
-    // 彗星占比：0.15 → 0.5（第四章 0.50 → 0.60）
+      ? Number((1.58 + t2 * 0.45).toFixed(2))     // 1.58 → 2.03
+      : Number((0.5 + t * 1.05).toFixed(2));      // 0.50 → 1.55
+    // 彗星占比：0.15 → 0.50（第四章 0.46 → 0.52）
     const cometRatio = isCh4
-      ? clamp(0.5 + t2 * 0.10, 0.5, 0.6)
+      ? clamp(0.46 + t2 * 0.06, 0.46, 0.52)
       : clamp(0.15 + t * 0.35, 0.15, 0.5);
     // v1.9 新威胁的占比：分裂彗星（全程少量，后期增多）、引力干扰体（仅中后期）。
     // 两者都是确定性抽取（同一 rng 序列），所有玩家看到完全一致的构成。
+    // 硬约束：三者之和必须 < 1，否则陨石（else 分支）永远不会被抽到。
     const splitterRatio = isCh4
-      ? clamp(0.16 + t2 * 0.06, 0.16, 0.22)
-      : clamp(0.03 + t * 0.13, 0.03, 0.16);
+      ? clamp(0.18 + t2 * 0.02, 0.18, 0.2)
+      : clamp(0.03 + t * 0.15, 0.03, 0.18);
     const disturberRatio = isCh4
-      ? clamp(0.12 + t2 * 0.06, 0.12, 0.18)
-      : clamp(t * 0.12, 0, 0.12);
+      ? clamp(0.14 + t2 * 0.04, 0.14, 0.18)
+      : clamp(t * 0.14, 0, 0.14);
 
     // 确定性生成波次：每波若干来袭，spread/edge/speed/mass 随难度递增
     const waves = [];
@@ -184,8 +192,9 @@
       const wt = (w + 1) / waveCount;             // 波次内进度 0..1
       const count = Math.round(clamp(4 + (t * 5) + wt * 3, 4, 14));
       const spreadArc = clamp(0.5 + t * 1.2 + wt * 0.4, 0.5, 2.4); // 覆盖角范围（弧度）
-      const baseSpeed = Number((80 + t * 145 + wt * 45).toFixed(1));
-      const mass = Math.round(clamp(32 + t * 85 + wt * 36, 26, 180));
+      // v1.11 重校准：来袭速度与质量按 intensity 整体上调（越靠后越明显）
+      const baseSpeed = Number(((80 + t * 145 + wt * 45) * intensity).toFixed(1));
+      const mass = Math.round(clamp((32 + t * 85 + wt * 36) * intensity, 26, 230));
       const spawns = [];
       for (let s = 0; s < count; s++) {
         // 类型抽取：单次 rng() 决定，区间依次为 分裂彗星 / 干扰体 / 彗星 / 陨石
@@ -274,6 +283,106 @@
     }));
   }
 
+  // ===== 隐藏关（v1.11）=====
+  // 定位：**纯挑战关**——不属任何章节、不计星（满星上限恒为 120）、不推进常规解锁进度。
+  // 解锁条件写在 unlock 字段（累计星数 / 40 个常规关的额外任务全清），由 game.js 判定与展示进度。
+  // 波次使用**独立种子**生成，不触碰常规关卡的 rng 抽取序列（确定性红线）。
+  function buildHiddenLevel(cfg) {
+    const hrng = mulberry32(cfg.seed);
+    const theme = THEMES[cfg.themeIndex % THEMES.length];
+    const waves = [];
+    for (let w = 0; w < cfg.waveCount; w++) {
+      const wt = (w + 1) / cfg.waveCount;
+      const count = Math.round(clamp(6 + cfg.difficulty * 4 + wt * 3, 6, 15));
+      const spreadArc = clamp(0.9 + cfg.difficulty * 0.8 + wt * 0.3, 0.9, 2.2);
+      const baseSpeed = Number((120 + cfg.difficulty * 110 + wt * 45).toFixed(1));
+      const mass = Math.round(clamp(45 + cfg.difficulty * 75 + wt * 34, 34, 230));
+      const spawns = [];
+      for (let s = 0; s < count; s++) {
+        const roll = hrng();
+        let kind;
+        if (roll < cfg.splitterRatio) kind = 'splitter';
+        else if (roll < cfg.splitterRatio + cfg.disturberRatio) kind = 'disturber';
+        else if (roll < cfg.splitterRatio + cfg.disturberRatio + cfg.cometRatio) kind = 'comet';
+        else kind = 'asteroid';
+        const speedScale = kind === 'splitter' ? 1.18
+          : kind === 'comet' ? 1.25
+          : kind === 'disturber' ? 0.85 : 1;
+        const massScale = kind === 'disturber' ? 0.95
+          : (kind === 'comet' || kind === 'splitter') ? 0.7 : 1;
+        const radius = kind === 'comet' ? 7
+          : kind === 'splitter' ? 9
+          : kind === 'disturber' ? 15
+          : Math.round(clamp(14 + mass / 9, 14, 26));
+        spawns.push({
+          kind,
+          edge: hrng() < 0.5 ? 'left' : 'right',
+          spread: Number(((hrng() - 0.5) * spreadArc).toFixed(3)),
+          speed: Number((baseSpeed * speedScale).toFixed(1)),
+          mass: Math.round(mass * massScale),
+          radius,
+        });
+      }
+      waves.push({
+        interval: Number(clamp(0.7 - cfg.difficulty * 0.12, 0.35, 0.7).toFixed(2)),
+        spawns,
+      });
+    }
+    // Boss 收尾波（与常规关同结构，保证 p2-systems 的 Boss 语义一致）
+    const bossSpeed = Number((70 + cfg.difficulty * 40).toFixed(1));
+    waves.push({
+      interval: 0.7,
+      boss: true,
+      spawns: [
+        { kind: 'boss', edge: 'right', spread: 0, speed: bossSpeed, mass: 320, radius: 34,
+          hp: Math.min(5, 3 + (cfg.bossHpBonus || 0)) },
+        { kind: 'asteroid', edge: 'left', spread: 0.25,
+          speed: Number((bossSpeed * 1.15).toFixed(1)), mass: 45, radius: 16 },
+        { kind: 'asteroid', edge: 'right', spread: -0.25,
+          speed: Number((bossSpeed * 1.15).toFixed(1)), mass: 45, radius: 16 },
+      ],
+    });
+    const totalWaves = waves.length;
+    return Object.freeze({
+      id: cfg.id,
+      name: cfg.name,
+      hidden: true,
+      desc: '隐藏关 · ' + totalWaves + ' 波 · 难度 ' + cfg.difficulty.toFixed(2),
+      intro: cfg.intro,
+      objective: '守住母星，击退全部 ' + totalWaves + ' 波来袭威胁',
+      failCondition: '母星生命值（' + cfg.health + ' 点）归零',
+      task: Object.freeze({ id: cfg.task.id, text: cfg.task.text }),
+      unlock: Object.freeze({ type: cfg.unlock.type, value: cfg.unlock.value }),
+      health: cfg.health, budget: cfg.budget, difficulty: cfg.difficulty, duration: 0,
+      waves: Object.freeze(waves),
+      scene: Object.freeze({
+        key: theme.scene.key,
+        intro: theme.scene.intro,
+        bodies: Object.freeze(theme.scene.bodies.map(b => Object.freeze(Object.assign({}, b)))),
+      }),
+      modifiers: Object.freeze(cfg.modifiers.slice()),
+    });
+  }
+  // 隐藏关 1：星能减半 + 禁道具（考验纯布防与协同）；隐藏关 2：来袭加速 + 禁黑洞 + 禁回收升级
+  LEVELS.push(buildHiddenLevel({
+    id: 'hidden-1', name: '隐藏关 · 无声围城', seed: 0x11DDE1, themeIndex: 6,
+    waveCount: 20, health: 12, budget: 320, difficulty: 1.9,
+    cometRatio: 0.34, splitterRatio: 0.14, disturberRatio: 0.16, bossHpBonus: 1,
+    modifiers: ['noProps', 'halfBudget'],
+    unlock: { type: 'stars', value: 100 },
+    task: { id: 'noHit', text: '母星零受击通关' },
+    intro: '隐藏关：初始星能减半且不发放任何道具，两道引力井会把来袭来回牵引。只能靠纯粹的布防与协同守住母星。',
+  }));
+  LEVELS.push(buildHiddenLevel({
+    id: 'hidden-2', name: '隐藏关 · 双倍绝境', seed: 0x22EE52, themeIndex: 7,
+    waveCount: 24, health: 10, budget: 360, difficulty: 2.1,
+    cometRatio: 0.36, splitterRatio: 0.16, disturberRatio: 0.18, bossHpBonus: 2,
+    modifiers: ['fastThreats', 'noBlackhole', 'noRecycle'],
+    unlock: { type: 'tasks', value: 40 },
+    task: { id: 'noSlow', text: '不使用时间减速通关' },
+    intro: '隐藏关：所有来袭速度 ×1.5，禁止放置黑洞，也禁止回收与升级。双脉冲源持续打乱轨道——这是星域尽头的最终考验。',
+  }));
+
   // 章节划分（4 章 × 10 关）：供菜单分组展示与该章星数完成度统计。
   // 仅是最上层展示结构，不影响关卡解锁与难度曲线。
   // story：章首关开局横幅的一句剧情文案（极简叙事，纯文本，不引入新界面）。
@@ -285,8 +394,27 @@
     { id: 'ch3', title: '第三章 · 风暴核心', subtitle: '乱流迷宫 → 风暴核心', from: 20, to: 29,
       story: '风暴核心的脉冲不断撕扯轨道，巨型天体已在集结——最后的防线必须由你亲手稳住。' },
     { id: 'ch4', title: '第四章 · 星海终局', subtitle: '坠星海沟 → 终焉双源', from: 30, to: 39,
-      story: '穿过坠星海沟，星域尽头是终焉双源。这里是已知星图的边界，也是母星最后的战场。' },
+      story: '穿过坠星海沟，星域尽头是终焉双源。这里是已知星图的边界，也是母星最后的战场。',
+      // 章节结局（v1.12）：通关本章最后一关（第 40 关）时在结算面板展示。
+      // 放在 CHAPTERS 而非关卡对象上：关卡对象有 fixture 逐字段精确比对，新增字段会击穿它。
+      ending: { title: '结局 · 星海终局',
+        text: '终焉双源的最后一次脉冲散入虚空，两颗崩解的恒星重归黑暗。母星在残骸间穿行，轨道重新亮起灯火——星图边界之内，再无来敌。' } },
   ];
+
+  // ===== 结局文案（v1.12）=====
+  // 隐藏关结语与「完美星图」收束文案。**独立导出，不挂到关卡对象上**：
+  //   test/content-ext.test.js 对 42 个关卡对象与 test/fixtures/campaign-v1.11.json 做逐字段 deepEqual，
+  //   任何写入关卡对象的新字段都会击穿该断言。此表由 game.js 的 getRunEnding()/总览面板读取。
+  const STORY = {
+    hidden: {
+      'hidden-1': { title: '结局 · 无声围城',
+        text: '没有任何道具、只有一半星能——你仍然让母星在二十波围城中纹丝不动。星图中最沉默的一座城，被你守成了标本。' },
+      'hidden-2': { title: '真结局 · 双倍绝境',
+        text: '双击脉冲源在最后一道轨迹上同时熄灭。你带着被撕扯过的防线穿过双倍绝境，看见了星图之外的第一缕光——那里没有敌人，只有更远的星海。' },
+    },
+    perfect: { title: '完美星图',
+      text: '120 颗星、40 项额外任务、两处隐藏关尽数收录。这片星域的每一道轨迹都被你亲手量过——星图至此完整。' },
+  };
 
   // ===== 每日挑战（单机）=====
   // 由本机日期键（'YYYYMMDD' 字符串，由 game.js 读取系统时间后传入）派生一个确定性关卡：
@@ -400,5 +528,15 @@
   global.CAMPAIGN_LEVELS = Object.freeze(LEVELS);
   global.CHAPTERS = Object.freeze(CHAPTERS.map(c => Object.freeze(c)));
   global.EXTRA_TASKS = Object.freeze(EXTRA_TASKS.map(t => Object.freeze(Object.assign({}, t))));
+  // 结局文案（v1.12）：深冻结，避免运行时被误改。
+  // hidden：按隐藏关 id 索引的结语；perfect：100% 收集（120 星 + 40 任务 + 2 隐藏关）收束文案。
+  const FROZEN_STORY = {
+    hidden: Object.freeze(Object.keys(STORY.hidden).reduce((acc, k) => {
+      acc[k] = Object.freeze(Object.assign({}, STORY.hidden[k]));
+      return acc;
+    }, {})),
+    perfect: Object.freeze(Object.assign({}, STORY.perfect)),
+  };
+  global.STORY = Object.freeze(FROZEN_STORY);
   global.makeDailyChallenge = makeDailyChallenge;
 })(typeof window !== 'undefined' ? window : globalThis);

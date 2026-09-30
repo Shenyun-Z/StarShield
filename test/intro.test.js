@@ -47,7 +47,8 @@ load('js/input.js');   // init 会调用 renderLevelCards（默认 survival 模�
 
 // 1. 关卡配置确定性：intro 字段完整且描述为字符串
 const levels = game.getLevelsForMode('campaign');
-assert('40 关每关均有 intro 简介', levels.every(l => typeof l.intro === 'string' && l.intro.length > 0));
+assert('42 关（40 常规 + 2 隐藏）每关均有 intro 简介',
+  levels.length === 42 && levels.every(l => typeof l.intro === 'string' && l.intro.length > 0));
 assert('每关均有额外任务定义（id + 文案）',
   levels.every(l => l.task && typeof l.task.id === 'string' && typeof l.task.text === 'string' && l.task.text.length > 4));
 assert('intro 为确定性文案（无随机标记）', levels.every(l => l.intro.length > 5));
@@ -71,9 +72,13 @@ assert('菜单 h1 使用 margin-top: auto', /\.menu h1\s*\{\s*margin-top:\s*auto
 assert('菜单 footer 使用 margin-bottom: auto', /\.menu-footer\s*\{\s*margin-bottom:\s*auto/.test(css));
 
 // 4. 难度递增（与 determinism 一致，独立复核）
+// v1.11：隐藏关是特殊规则挑战关，不在难度曲线内，故只校验常规关
+const regularLevels = levels.filter(l => !l.hidden);
 let monoOk = true;
-for (let i = 1; i < levels.length; i++) if (levels[i].difficulty <= levels[i - 1].difficulty - 1e-9) monoOk = false;
-assert('关卡难度严格递增', monoOk);
+for (let i = 1; i < regularLevels.length; i++) {
+  if (regularLevels[i].difficulty <= regularLevels[i - 1].difficulty - 1e-9) monoOk = false;
+}
+assert('常规关难度严格递增', monoOk);
 
 console.log(ok ? '\n=== 关卡简介/布局测试全部通过 ===' : '\n=== 关卡简介/布局测试存在失败 ===');
 process.exit(ok ? 0 : 1);

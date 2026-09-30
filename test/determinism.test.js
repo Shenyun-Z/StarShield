@@ -20,7 +20,10 @@ const a = loadLevels();
 const b = loadLevels();
 const c = loadLevels();
 
-assert('配置加载为 40 个关卡（前 30 关 + 第四章 10 关）', a.length === 40, 'len=' + a.length);
+assert('配置加载为 42 个关卡（40 常规关 + 2 隐藏关）', a.length === 42, 'len=' + a.length);
+assert('常规关仍为 40 / 隐藏关为 2',
+  a.filter(l => !l.hidden).length === 40 && a.filter(l => l.hidden).length === 2,
+  'regular=' + a.filter(l => !l.hidden).length + ' hidden=' + a.filter(l => l.hidden).length);
 assert('三次加载关卡数量一致', a.length === b.length && b.length === c.length);
 
 function deepEqual(x, y) {
@@ -61,21 +64,32 @@ assert('每关含 objective 与 failCondition', goalOk);
 let introOk = a.every(lv => typeof lv.intro === 'string' && lv.intro.length > 0);
 assert('每关含 intro 简介', introOk);
 
-// 难度严格递增：关卡整体难度（difficulty 字段）必须随序号单调递增（无平台期）
+// 难度严格递增：**常规关**的整体难度必须随序号单调递增（无平台期）。
+// 隐藏关是"特殊规则挑战关"，不在难度曲线内（各有专属 modifier 与极低血量），故单独断言。
+const reg = a.filter(l => !l.hidden);
 let monoOk = true;
 let firstBad = -1;
-for (let i = 1; i < a.length; i++) {
-  if (a[i].difficulty <= a[i - 1].difficulty - 1e-9) { monoOk = false; if (firstBad < 0) firstBad = i; }
+for (let i = 1; i < reg.length; i++) {
+  if (reg[i].difficulty <= reg[i - 1].difficulty - 1e-9) { monoOk = false; if (firstBad < 0) firstBad = i; }
 }
-assert('关卡难度严格递增', monoOk, (firstBad >= 0 ? 'break at ' + firstBad : '') + ' d0=' + a[0].difficulty + ' dN=' + a[a.length - 1].difficulty);
+assert('常规 40 关难度严格递增', monoOk, (firstBad >= 0 ? 'break at ' + firstBad : '') + ' d0=' + reg[0].difficulty + ' dN=' + reg[reg.length - 1].difficulty);
 
 // 波次数也随关卡递增（更多波 = 更持久 = 更难）
 let waveMono = true;
-for (let i = 1; i < a.length; i++) if (a[i].waves.length < a[i - 1].waves.length) waveMono = false;
-assert('关卡波次数随序号非递减', waveMono, 'w0=' + a[0].waves.length + ' wN=' + a[a.length - 1].waves.length);
+for (let i = 1; i < reg.length; i++) if (reg[i].waves.length < reg[i - 1].waves.length) waveMono = false;
+assert('常规 40 关波次数随序号非递减', waveMono, 'w0=' + reg[0].waves.length + ' wN=' + reg[reg.length - 1].waves.length);
 
-// 早期关卡更简单：第 1 关波次最少、血量最高
-assert('第 1 关血量 >= 后续关卡', a[0].health >= a[a.length - 1].health, 'h0=' + a[0].health + ' hN=' + a[a.length - 1].health);
+// 隐藏关：不计星的特殊规则关，自成一组并独立校验
+const hid = a.filter(l => l.hidden);
+assert('隐藏关带 hidden / unlock / modifiers / 更低血量',
+  hid.every(l => l.hidden && l.unlock && Array.isArray(l.modifiers) && l.modifiers.length > 0 && l.health < 16),
+  JSON.stringify(hid.map(l => l.id + ':' + l.health)));
+assert('隐藏关难度递增（隐藏 2 严于隐藏 1）', hid[0].difficulty < hid[1].difficulty,
+  hid.map(l => l.difficulty).join(' -> '));
+
+// 早期关卡更简单：第 1 关血量最高（与常规关末关比较）
+assert('第 1 关血量 >= 常规关末关', reg[0].health >= reg[reg.length - 1].health,
+  'h0=' + reg[0].health + ' hN=' + reg[reg.length - 1].health);
 
 // 验证无 Math.random 依赖（从源码层面）：levels-campaign.js 不应含 Math.random
 const src = fs.readFileSync(path.join(root, 'js/levels-campaign.js'), 'utf8');

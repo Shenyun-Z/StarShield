@@ -175,14 +175,22 @@ const predictorRenderer = (function () {
     for (let k = 0; k < placingStars.length; k++) {
       const ps = placingStars[k];
       if (ps.forbidden) continue;                 // 禁区的不预测
+      const isBH = ps.type === 'blackhole';
       const b = {
-        type: ps.type === 'blackhole' ? 'blackhole' : 'star',
+        type: isBH ? 'blackhole' : 'star',
         mass: ps.mass || 300, radius: ps.radius || 14,
         x: ps.x, y: ps.y,
         vx: ps.vx || 0, vy: ps.vy || 0,
         isCollectable: true,
-        // 玩家放置的恒星不会被 anchored/immovable（黑洞例外）
-        ...(ps.type === 'blackhole' ? { anchored: true, immovable: true } : {}),
+        // v1.11：预览替身必须带上专精与 baseMass，否则物理层的协同会跳过它
+        // （协同只处理带 baseMass 的玩家星体），导致"预览线不含协同、实战却含"的分叉。
+        ...(isBH
+          ? { anchored: true, immovable: true, synergyMul: 1 }
+          : {
+              spec: ps.spec || 'gravity',
+              baseMass: ps.baseMass || ps.mass || 300,
+              synergyMul: 1, synergyBonus: 0, synergyNeighbors: 0,
+            }),
       };
       snapshot.push(b);
       injected.push({ index: snapshot.length - 1, body: b });

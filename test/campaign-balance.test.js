@@ -86,23 +86,40 @@ function assert(name, cond, extra) {
 /* ============ A. 静态下界与场景规格 ============ */
 console.log('--- A. 静态下界与场景规格 ---');
 {
-  assert('关卡数为 40（前 30 关 + 第四章 10 关）', levels.length === 40, 'n=' + levels.length);
+  assert('关卡数为 42（40 常规 + 2 隐藏）', levels.length === 42, 'n=' + levels.length);
+  // v1.11：常规关沿用可行下界模型；隐藏关是"特殊规则挑战关"，另行断言其极端参数
+  const regular = levels.filter(l => !l.hidden);
+  const hidden = levels.filter(l => l.hidden);
+  assert('常规关仍为 40 / 隐藏关为 2', regular.length === 40 && hidden.length === 2,
+    'regular=' + regular.length + ' hidden=' + hidden.length);
   // 可玩性下界模型：初始星能 + 清场返还(+2/威胁) ≥ 最基础布防（两颗大行星 = 600）
   let minAvail = Infinity, worst = -1;
-  for (let i = 0; i < levels.length; i++) {
-    const lv = levels[i];
+  for (let i = 0; i < regular.length; i++) {
+    const lv = regular[i];
     const totalSpawns = lv.waves.reduce((s, w) => s + w.spawns.length, 0);
     const avail = lv.budget + 2 * totalSpawns;      // 与 registerClear 的 +2 返还口径一致
     if (avail < minAvail) { minAvail = avail; worst = i + 1; }
   }
-  assert('每关可用星能下界 ≥ 2 颗大行星成本（600）',
+  assert('常规关可用星能下界 ≥ 2 颗大行星成本（600）',
     minAvail >= 2 * STAR_TYPES.large.cost, 'min=' + minAvail + ' @level ' + worst);
-  assert('每关初始星能 ≥ 1 颗大行星成本（300）',
-    levels.every(lv => lv.budget >= STAR_TYPES.large.cost));
-  assert('每关母星血量 ≥ 16（★2 门槛可承受）',
-    levels.every(lv => lv.health >= 16));
-  assert('★2 门槛（max(2, 波数/2)）不超过该关波数',
+  assert('常规关初始星能 ≥ 1 颗大行星成本（300）',
+    regular.every(lv => lv.budget >= STAR_TYPES.large.cost));
+  assert('常规关母星血量 ≥ 16（★2 门槛可承受）',
+    regular.every(lv => lv.health >= 16));
+  assert('★2 门槛（max(2, 波数/2)）不超过该关波数（全部 42 关）',
     levels.every((lv, i) => game.getStarCriteria(i).star2HitLimit <= lv.waves.length));
+  // 隐藏关：极低血量 + 星能收紧 + 带修饰符 + 不计星（满星上限仍为 120）
+  assert('隐藏关参数合法（血量 8~15、星能 ≥ 200、带 1~3 条修饰符、含 Boss 收尾波）',
+    hidden.every(lv => lv.health >= 8 && lv.health < 16
+      && lv.budget >= 200
+      && Array.isArray(lv.modifiers) && lv.modifiers.length >= 1 && lv.modifiers.length <= 3
+      && lv.waves[lv.waves.length - 1].spawns.some(s => s.kind === 'boss')),
+    JSON.stringify(hidden.map(lv => lv.id + ':hp' + lv.health)));
+  assert('隐藏关不计星：满星上限仍为 120',
+    game.totalStarsMax() === 120 && game.regularLevelCount() === 40);
+  assert('隐藏关解锁数据合法（stars / tasks 两类，值为正）',
+    hidden.every(lv => lv.unlock && (lv.unlock.type === 'stars' || lv.unlock.type === 'tasks')
+      && lv.unlock.value > 0));
   // 场景规格合法：类型白名单 + 质量/半径为正 + 不在母星禁放区内
   const W = 1280, H = 720, cx = W / 2, cy = H / 2;
   let sceneOk = true, sceneCount = 0, minDist = Infinity;
@@ -117,7 +134,7 @@ console.log('--- A. 静态下界与场景规格 ---');
     }
   }
   assert('场景规格合法（类型白名单 / 正质量与半径 / 不侵入禁放区）', sceneOk);
-  assert('40 关共生成场景天体（至少 10 个，主题确有内容）', sceneCount >= 10, 'n=' + sceneCount);
+  assert('42 关共生成场景天体（至少 10 个，主题确有内容）', sceneCount >= 10, 'n=' + sceneCount);
   assert('所有场景天体与母星保持安全距离', minDist >= 64, 'minDist=' + minDist.toFixed(1));
   assert('主题场景与简介一致（有场景的关卡简介非空且提到场景）',
     levels.every(lv => (lv.scene.bodies.length === 0) || (typeof lv.scene.intro === 'string' && lv.scene.intro.length > 8)));

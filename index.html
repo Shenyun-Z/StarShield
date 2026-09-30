@@ -43,6 +43,11 @@
         <span class="hud-label">下一波</span>
         <span id="wavePreviewBody" class="wp-body"></span>
       </div>
+      <!-- 无尽阶段（v1.12）：显示当前阶段与距下次风暴的波数；风暴波整条转红 -->
+      <div class="hud-group stage-group" id="endlessStage" style="display:none">
+        <span class="hud-label">无尽</span>
+        <span id="endlessStageVal" class="stage-body"></span>
+      </div>
     </div>
 
     <!-- Boss 分段血条：出现 Boss 时显示（默认隐藏） -->
@@ -66,6 +71,11 @@
       <button class="star-opt selected" data-star="large">大行星<small>300</small></button>
       <button class="star-opt" data-star="star">恒星<small>500</small></button>
       <button class="star-opt bh" data-star="blackhole">黑洞<small>1500</small></button>
+      <!-- 星体专精（v1.11）：引力型 = 基准值；巨型 = 碰撞面大 50%、引力弱 20%、贵 20% -->
+      <span class="star-bar-label spec-label">专精：</span>
+      <button id="spec-gravity" class="spec-opt selected" data-spec="gravity">引力型<small>标准</small></button>
+      <button id="spec-giant" class="spec-opt" data-spec="giant">巨型<small>+20% 价</small></button>
+      <span id="specPreview" class="spec-preview"></span>
     </div>
 
     <!-- 操作按钮：默认隐藏，游戏开始后显示 -->
@@ -90,6 +100,7 @@
     <div id="bodyPanel" class="body-panel" style="display:none">
       <span id="bpName" class="bp-name">星体</span>
       <button id="bpUpgrade" class="ctrl">升级</button>
+      <button id="bpSwitchSpec" class="ctrl">切换专精</button>
       <button id="bpRecycle" class="ctrl">回收</button>
       <button id="bpClose" class="ctrl ghost">关闭</button>
     </div>
@@ -116,10 +127,14 @@
           <div><span class="rs-label">星能花费</span><span id="rsSpent">0</span></div>
         </div>
 
+        <!-- 结局文案（v1.12）：仅闯关第 40 关与隐藏关通关时展示 -->
+        <div id="resultEnding" class="result-ending" style="display:none"></div>
         <!-- 每关额外任务结果（v1.10，只判不罚） -->
         <div id="resultTask" class="result-task" style="display:none"></div>
         <!-- 本关最佳记录对比（v1.10，新纪录高亮） -->
         <div id="resultRecord" class="result-record" style="display:none"></div>
+        <!-- 历史榜单名次（v1.12，5 条截断） -->
+        <div id="resultBoard" class="result-board" style="display:none"></div>
 
         <!-- 计分规则与明细 -->
         <div class="score-breakdown">
@@ -178,7 +193,7 @@
           </button>
           <button class="mode-card" data-mode="campaign">
             <div class="mc-name">闯关模式</div>
-            <div class="mc-desc">固定星能 · 层层递进<br>30 关预设关卡，通关解锁下一关，比拼通关进度</div>
+            <div class="mc-desc">固定星能 · 层层递进<br>40 关 + 2 隐藏关，通关解锁下一关，比拼通关进度</div>
           </button>
           <button class="mode-card" data-mode="endless">
             <div class="mc-name">无尽模式</div>
@@ -218,9 +233,16 @@
         <div id="achieveList" class="achieve-list" style="display:none"></div>
       </div>
 
+      <!-- 星图总览（v1.12）：收集进度 / 统计摘要 / 历史榜单，可折叠 -->
+      <div class="menu-section">
+        <div class="menu-title" id="collectTitle">星图总览</div>
+        <button id="collectToggle" class="opt-btn">展开总览</button>
+        <div id="collectList" class="collect-list" style="display:none"></div>
+      </div>
+
       <div class="menu-footer">
         <button id="menuClearProg" class="opt-btn danger">一键清除进度</button>
-        <p class="footer-hint">清除后将从第 1 关重新挑战，并清空最佳战绩与存档布防</p>
+        <p class="footer-hint">清除后将从第 1 关重新挑战，并清空星级 / 成就 / 挑战 / 每日 / 任务 / 纪录 / 统计等全部本机存档</p>
       </div>
     </div>
   </div>

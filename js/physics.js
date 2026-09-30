@@ -26,6 +26,45 @@
   const HP_HIT_CD = 0.4;    // 多段天体（Boss）两次受伤的最小间隔(s)：防止贴住不可动天体时逐帧掉段
   const PULSE_RADIUS = 260; // 引力干扰体脉冲的作用半径(px)
 
+  /* ============ 星体专精与布局协同（v1.11）============ */
+  // 专精：同一档位的两种用途分化。
+  //   「引力型」= 基准值（质量/半径/价格与历史完全一致）——保证既有手感、记账与模拟零漂移；
+  //   「巨型」以 20% 更高的价格换取 50% 更大的碰撞面（拦截/挡道用），代价是引力弱 20%。
+  const SPECS = {
+    gravity: { id: 'gravity', name: '引力型', massMul: 1.00, radiusMul: 1.00, costMul: 1.00,
+               desc: '标准引力与价格' },
+    giant:   { id: 'giant',   name: '巨型',   massMul: 0.80, radiusMul: 1.50, costMul: 1.20,
+               desc: '碰撞面大 50%、引力弱 20%、贵 20%' },
+  };
+  const SPEC_IDS = ['gravity', 'giant'];
+  // 布局协同：玩家星体彼此邻近时引力质量叠加（每颗 +5%，上限 +30%），
+  // 靠近场景机关（伴星/引力井/脉冲源）再 +10%，总上限 +40%。
+  // 关键实现取舍：加成以「写回 body.mass」落地——引力积分、引力场可视化与预测器
+  // 复用同一积分器，因此**预测线自动包含协同**，不会出现"预测不含加成"的分叉。
+  const SYNERGY_RADIUS = 150;        // 星体互邻判定半径(px)
+  const SYNERGY_STEP = 0.05;         // 每颗邻近星体的加成
+  const SYNERGY_MAX = 0.30;          // 星体互邻部分的上限
+  const SYNERGY_SCENE_RADIUS = 120;  // 借力判定半径(px)
+  const SYNERGY_SCENE_BONUS = 0.10;  // 靠近场景机关的加成
+  const SYNERGY_TOTAL_MAX = 0.40;    // 加法叠加后的总上限
+  const SYNERGY_R2 = SYNERGY_RADIUS * SYNERGY_RADIUS;
+  const SYNERGY_SCENE_R2 = SYNERGY_SCENE_RADIUS * SYNERGY_SCENE_RADIUS;
+  // 可"借力"的场景天体：引力类机关（障碍是实体墙，提供的是阻挡而非引力加成）
+  const SYNERGY_SCENE_TYPES = ['companion', 'well', 'pulsar'];
+
+  // 按专精派生某档的实际质量/半径（game.js 的放置/升级/互转与 UI 展示共用同一口径）
+  function specDef(specId) { return SPECS[specId] || SPECS.gravity; }
+  function applySpec(baseMass, baseRadius, specId) {
+    const s = specDef(specId);
+    return {
+      mass: Math.round(baseMass * s.massMul),
+      radius: Math.round(baseRadius * s.radiusMul),
+    };
+  }
+  function isSynergyScene(b) {
+    return !!b && SYNERGY_SCENE_TYPES.indexOf(b.type) >= 0;
+  }
+
   /* ============ 天体类型分类（单一真源） ============ */
   // 背景：新增类型后，散落各处的 `type === 'asteroid' || type === 'comet'` 必然漏改，
   // 会造成"击退不计分 / 撞母星不扣血 / 波次永不结算"等连锁缺陷，因此在这里集中定义。
@@ -233,6 +272,58 @@
     _bx = new Float64Array(cap); _by = new Float64Array(cap);
   }
 
+  /* ============ 布局协同：每步重算并写回 body.mass ============ */
+  // 零分配：只复用模块级数组与 TypedArray（预测器每帧可能跑上百步，不能每步建对象）。
+  let _synStars = [], _synScenes = [];
+  let _synCount = new Int16Array(256);
+  function ensureSynCapacity(n) {
+    if (n <= _synCount.length) return;
+    let cap = _synCount.length;
+    while (cap < n) cap *= 2;
+    _synCount = new Int16Array(cap);
+  }
+  // 只统计"真正由玩家放置的星体"（必须带 baseMass）：
+  // 测试、拖拽预览与预测替身中手工构造的天体不带 baseMass，必须原样跳过——
+  // 否则会被写成 NaN 并污染整个物理积分。
+  function recomputeSynergy(list) {
+    const stars = _synStars, scenes = _synScenes;
+    stars.length = 0; scenes.length = 0;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (!b || b.dead) continue;
+      if (b.type === 'star' && Number.isFinite(b.baseMass)) stars.push(b);
+      else if (isSynergyScene(b)) scenes.push(b);
+    }
+    const ns = stars.length;
+    ensureSynCapacity(ns);
+    for (let i = 0; i < ns; i++) _synCount[i] = 0;
+    for (let i = 0; i < ns; i++) {
+      const a = stars[i];
+      for (let j = i + 1; j < ns; j++) {
+        const b = stars[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        if (dx * dx + dy * dy <= SYNERGY_R2) { _synCount[i]++; _synCount[j]++; }
+      }
+    }
+    const sceneCount = scenes.length;
+    for (let i = 0; i < ns; i++) {
+      const a = stars[i];
+      let bonus = Math.min(SYNERGY_MAX, SYNERGY_STEP * _synCount[i]);
+      for (let k = 0; k < sceneCount; k++) {
+        const s = scenes[k];
+        const dx = s.x - a.x, dy = s.y - a.y;
+        if (dx * dx + dy * dy <= SYNERGY_SCENE_R2) { bonus += SYNERGY_SCENE_BONUS; break; }
+      }
+      if (bonus > SYNERGY_TOTAL_MAX) bonus = SYNERGY_TOTAL_MAX;
+      bonus = Math.round(bonus * 10000) / 10000;      // 收敛浮点尾差，便于 UI 展示与测试断言
+      a.synergyNeighbors = _synCount[i];
+      a.synergyBonus = bonus;
+      a.synergyMul = 1 + bonus;
+      a.mass = a.baseMass * a.synergyMul;
+    }
+    return ns;
+  }
+
   // 将 list 中每个天体所受引力加速度写入 outX/outY（单位质量）
   function accumulateAccel(list, outX, outY) {
     const n = list.length;
@@ -269,6 +360,11 @@
       if (!b.dead) _live.push(b);
     }
     const n = _live.length;
+
+    // 布局协同（v1.11）：必须在积分之前、且**在 stepSystem 内部**执行——
+    // 预测器复用本函数逐步积分，因此真实对局与预测线走完全相同的一步：
+    // 若改成在 game.stepFrame 每帧调一次，多子步（MAX_SUBSTEPS）时会与预测分叉。
+    recomputeSynergy(_live);
 
     // 生命周期：存活计时、受伤冷却、限时天体到期。
     // 这里只依赖 age 与固定常量（不含随机、不依赖墙钟），因此预测器的克隆系统
@@ -344,6 +440,13 @@
     // 天体类型分类（单一真源，供 game.js / 渲染 / 预测统一判定）
     THREAT_TYPES: THREAT_TYPES, SCENE_TYPES: SCENE_TYPES, PROP_TYPES: PROP_TYPES,
     isThreat: isThreat, isScene: isScene, isPickable: isPickable, needsAge: needsAge,
+    // 星体专精与布局协同（v1.11）
+    SPECS: SPECS, SPEC_IDS: SPEC_IDS,
+    specDef: specDef, applySpec: applySpec, recomputeSynergy: recomputeSynergy,
+    isSynergyScene: isSynergyScene,
+    SYNERGY_RADIUS: SYNERGY_RADIUS, SYNERGY_STEP: SYNERGY_STEP, SYNERGY_MAX: SYNERGY_MAX,
+    SYNERGY_SCENE_RADIUS: SYNERGY_SCENE_RADIUS, SYNERGY_SCENE_BONUS: SYNERGY_SCENE_BONUS,
+    SYNERGY_TOTAL_MAX: SYNERGY_TOTAL_MAX, SYNERGY_SCENE_TYPES: SYNERGY_SCENE_TYPES,
     // 函数
     Body: Body,
     createBody: createBody,
