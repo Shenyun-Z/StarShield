@@ -1,16 +1,16 @@
-// 关卡基线 fixture 生成脚本（v1.12 新增）
+// 关卡基线 fixture 生成脚本（v1.11 新增）
 //
 // 背景：test/fixtures/campaign-v1.10.json 与 campaign-v1.11.json 此前没有可复现的生成脚本，
 // 导致「重校准关卡数值 → 需要更新基线」时无法一步复现。本脚本把当前 js/levels-campaign.js
 // 的产出序列化为基线 JSON，结构为 { levels: [ <每关完整对象>, ... ] }（与既有 fixture 一致）。
 //
 // 用法：
-//   node test/fixtures/generate.js                       # 默认写出 campaign-v1.12.json（当前版本快照）
-//   node test/fixtures/generate.js campaign-v1.13.json   # 写出指定文件名（下一轮发布时使用）
+//   node test/fixtures/generate.js                   # 默认写出 campaign-v1.12.json（下一发布版的快照）
+//   node test/fixtures/generate.js <name>.json       # 亦可指定文件名（当前发布版 v1.11 的基线已是冻结文件）
 //
 // 安全约束：
-//   1) 拒绝覆盖历史基线 campaign-v1.10.json / campaign-v1.11.json —— 它们是不可变的历史证据，
-//      本轮「42 关数值零改动」正依赖 v1.11 的逐字段比对；
+//   1) 拒绝覆盖历史基线 campaign-v1.10.json / campaign-v1.11.json —— 它们是不可变的历史证据：
+//      v1.10 是上一发布版的基线，v1.11 是当前发布版关卡数值的锁定依据（42 关逐字段比对）；
 //   2) 不写入任何其他路径（只写 test/fixtures/ 下）；
 //   3) 文件名非 .test.js 后缀，因此不会被 test/run-all.js 当作测试套件执行（但会被 node --check 语法检查）。
 'use strict';

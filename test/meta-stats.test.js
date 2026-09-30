@@ -1,6 +1,6 @@
-// v1.12 模式深化与重玩性测试套件
+// v1.11 模式深化与重玩性测试套件
 //   A. 无尽阶段表：确定性、逐段非递减、风暴波判定（wave % 10 === 0）
-//   B. 无尽节奏：第 1~10 波与 v1.11 口径完全一致；难度进度单调不减；生存模式零漂移
+//   B. 无尽节奏：第 1~10 波与上一发布版（v1.10）口径完全一致；难度进度单调不减；生存模式零漂移
 //   C. 风暴波构成：风暴前锋混入分裂彗星、阶段混入特殊威胁、提示与 HUD 阶段号；生存模式不受影响
 //   D. 历史榜单：排序指标（无尽比波数 / 其余比分数）、5 条截断、名次返回、落盘
 //   E. 累计统计：场次/胜场/时长/拦截/受击累加、单局只累加一次（幂等）、模式互不污染
@@ -105,7 +105,7 @@ console.log('--- A. 无尽阶段表 ---');
     }
   }
   assert('阶段参数逐段非递减（难度只增不减）', mono, detail);
-  assert('阶段 0 为基准值（第 1~10 波与 v1.11 完全一致的前提）',
+  assert('阶段 0 为基准值（第 1~10 波与上一版完全一致的前提）',
     stages[0].bump === 0 && stages[0].countMul === 1
     && stages[0].cometRatio === 0 && stages[0].splitterRatio === 0 && stages[0].disturberRatio === 0);
 
@@ -143,7 +143,7 @@ console.log('--- A. 无尽阶段表 ---');
     sv.bump === 0 && sv.countMul === 1 && sv.splitterRatio === 0 && sv.stormNow === false);
 }
 
-/* ============ B. 无尽节奏（与 v1.11 前 10 波一致 + 单调） ============ */
+/* ============ B. 无尽节奏（与上一版前 10 波一致 + 单调） ============ */
 console.log('--- B. 无尽节奏 ---');
 {
   // 无尽复用 SURVIVAL_LEVELS[2].waves：start 0.45 / end 1.0 / ramp 0.018 / interval 1.2→0.4
@@ -160,7 +160,7 @@ console.log('--- B. 无尽节奏 ---');
     const expected = lerp(cfg.startDifficulty, cfg.endDifficulty, Math.min(1, w * cfg.difficultyRamp));
     if (Math.abs(p.difficulty - expected) > 1e-9) drift = w;
   }
-  assert('第 1~10 波难度与 v1.11 口径完全一致（阶段 0 无加成）', drift < 0, '首个漂移波=' + drift);
+  assert('第 1~10 波难度与上一发布版（v1.10）口径完全一致（阶段 0 无加成）', drift < 0, '首个漂移波=' + drift);
 
   // 单调性：难度进度非递减 → difficulty 不减、interval 不增（count 带 ±1 随机，不参与断言）
   let diffOk = true, intOk = true, bad = '';
@@ -215,7 +215,7 @@ console.log('--- C. 风暴波构成 ---');
   const kindsOf = () => st.waveQueue.map(i => i.kind);
   const count = (arr, k) => arr.filter(x => x === k).length;
 
-  // 阶段 0 的非风暴波：只有陨石与彗星（与 v1.11 一致）
+  // 阶段 0 的非风暴波：只有陨石与彗星（与上一版一致）
   st.wave = 4;
   startNextWave(g, st);
   assert('第 5 波（阶段 0，非风暴）不含分裂彗星/干扰体',
@@ -515,6 +515,6 @@ console.log('--- G. 展示层 ---');
   assert('非 100% 收集时不显示「完美星图」收束文案', html.indexOf('perfect') < 0 && html.indexOf('完美星图') < 0);
 }
 
-console.log(ok ? '\n=== v1.12 无尽阶段 / 榜单 / 统计测试全部通过 ==='
-               : '\n=== v1.12 榜单/统计测试存在失败 ===');
+console.log(ok ? '\n=== v1.11 无尽阶段 / 榜单 / 统计测试全部通过 ==='
+               : '\n=== v1.11 榜单/统计测试存在失败 ===');
 process.exit(ok ? 0 : 1);

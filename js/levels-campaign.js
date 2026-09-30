@@ -395,13 +395,13 @@
       story: '风暴核心的脉冲不断撕扯轨道，巨型天体已在集结——最后的防线必须由你亲手稳住。' },
     { id: 'ch4', title: '第四章 · 星海终局', subtitle: '坠星海沟 → 终焉双源', from: 30, to: 39,
       story: '穿过坠星海沟，星域尽头是终焉双源。这里是已知星图的边界，也是母星最后的战场。',
-      // 章节结局（v1.12）：通关本章最后一关（第 40 关）时在结算面板展示。
+      // 章节结局（v1.11）：通关本章最后一关（第 40 关）时在结算面板展示。
       // 放在 CHAPTERS 而非关卡对象上：关卡对象有 fixture 逐字段精确比对，新增字段会击穿它。
       ending: { title: '结局 · 星海终局',
         text: '终焉双源的最后一次脉冲散入虚空，两颗崩解的恒星重归黑暗。母星在残骸间穿行，轨道重新亮起灯火——星图边界之内，再无来敌。' } },
   ];
 
-  // ===== 结局文案（v1.12）=====
+  // ===== 结局文案（v1.11）=====
   // 隐藏关结语与「完美星图」收束文案。**独立导出，不挂到关卡对象上**：
   //   test/content-ext.test.js 对 42 个关卡对象与 test/fixtures/campaign-v1.11.json 做逐字段 deepEqual，
   //   任何写入关卡对象的新字段都会击穿该断言。此表由 game.js 的 getRunEnding()/总览面板读取。
@@ -528,7 +528,7 @@
   global.CAMPAIGN_LEVELS = Object.freeze(LEVELS);
   global.CHAPTERS = Object.freeze(CHAPTERS.map(c => Object.freeze(c)));
   global.EXTRA_TASKS = Object.freeze(EXTRA_TASKS.map(t => Object.freeze(Object.assign({}, t))));
-  // 结局文案（v1.12）：深冻结，避免运行时被误改。
+  // 结局文案（v1.11）：深冻结，避免运行时被误改。
   // hidden：按隐藏关 id 索引的结语；perfect：100% 收集（120 星 + 40 任务 + 2 隐藏关）收束文案。
   const FROZEN_STORY = {
     hidden: Object.freeze(Object.keys(STORY.hidden).reduce((acc, k) => {

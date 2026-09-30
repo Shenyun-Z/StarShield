@@ -737,7 +737,7 @@ html, body {
   border-radius: 999px;
 }
 
-/* ================= v1.12：结局 / 榜单 / 星图总览 / 无尽阶段 ================= */
+/* ================= v1.11：结局 / 榜单 / 星图总览 / 无尽阶段 ================= */
 
 /* ---------- HUD：无尽阶段胶囊（风暴波整条转红并呼吸） ---------- */
 .stage-group {
@@ -857,7 +857,7 @@ html, body {
   .preview-group { flex-wrap: wrap; }
   .wp-body { gap: 6px; }
   #levelBanner .lb-story { padding: 0 12px; }
-  /* v1.12：无尽阶段胶囊允许换行；总览面板行距收紧、标签可换行 */
+  /* v1.11：无尽阶段胶囊允许换行；总览面板行距收紧、标签可换行 */
   .stage-group { flex-wrap: wrap; }
   .collect-row { flex-direction: column; gap: 0; line-height: 1.6; }
   .collect-row .cr-value { text-align: left; }

@@ -317,7 +317,7 @@
     });
   }
 
-  // ===== 星图总览面板（v1.12）=====
+  // ===== 星图总览面板（v1.11）=====
   // 三块：收集进度 / 统计摘要 / 历史榜单（各模式前 5）。整体用 innerHTML 一次性拼装，
   // 与成就面板同构（避免 createElement 顺序影响既有测试，且测试 stub 的 appendChild 是 no-op）。
   function fmtDuration(sec) {
@@ -1141,7 +1141,7 @@
         recBox.textContent = '';
       }
     }
-    // 结局文案（v1.12）：仅闯关第 40 关与两个隐藏关通关时展示（判定在 game.getRunEnding）
+    // 结局文案（v1.11）：仅闯关第 40 关与两个隐藏关通关时展示（判定在 game.getRunEnding）
     const endBox = document.getElementById('resultEnding');
     if (endBox) {
       const ending = game.state.lastEnding;
@@ -1155,7 +1155,7 @@
         endBox.innerHTML = '';
       }
     }
-    // 历史榜单名次（v1.12）：进前 5 名才提示（未上榜不显示，避免"人人都上榜"的廉价感）
+    // 历史榜单名次（v1.11）：进前 5 名才提示（未上榜不显示，避免"人人都上榜"的廉价感）
     const boardBox = document.getElementById('resultBoard');
     if (boardBox) {
       const br = game.state.lastBoardRank;

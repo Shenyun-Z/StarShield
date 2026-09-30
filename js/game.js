@@ -71,7 +71,7 @@
   const DAILY_KEY = 'starshield_daily';
   const TASKS_KEY = 'starshield_tasks';
   const RECORDS_KEY = 'starshield_records';
-  // ===== v1.12 新增存档键（历史榜单 + 累计统计，共用一个键）=====
+  // ===== v1.11 新增存档键（历史榜单 + 累计统计，共用一个键）=====
   const STATS_KEY = 'starshield_stats';
   // 第四章（新增内容）的解锁门槛：通关第 30 关之后，还需累计星星达到门槛。
   // 只作用于 idx >= 30 的新关卡——前 30 关的解锁语义与可达性逐位不变（不做进度倒退）。
@@ -182,14 +182,14 @@
     modifiers: [],           // 本局生效的挑战修饰符 id（[] = 无修饰）
     blackholesPlaced: 0,     // 本局放置的黑洞数（任务 noBlackhole 判定用）
     specSwitches: 0,         // 本局专精互转次数（v1.11，结算统计）
-    specGiantPlaced: 0,      // 本局放置的「巨型」专精星体数（v1.12，成就判定用）
+    specGiantPlaced: 0,      // 本局放置的「巨型」专精星体数（v1.11，成就判定用）
     isLastWave: false,       // 当前波是否为该关最后一波（跨局必须复位，见 setupLevel）
-    endlessStage: 0,         // 无尽模式当前阶段（v1.12：每 10 波一段，跨局必须复位）
+    endlessStage: 0,         // 无尽模式当前阶段（v1.11：每 10 波一段，跨局必须复位）
     lastTask: null,          // 最近一局的任务结果（结算面板用）
     lastRecord: null,        // 最近一局的纪录对比（结算面板用）
     lastDaily: null,         // 最近一局的每日挑战成绩（结算面板用）
-    lastEnding: null,        // 最近一局的结局文案（v1.12，结算面板用；仅闯关终关/隐藏关）
-    lastBoardRank: null,     // 最近一局的历史榜单名次（v1.12，结算面板用）
+    lastEnding: null,        // 最近一局的结局文案（v1.11，结算面板用；仅闯关终关/隐藏关）
+    lastBoardRank: null,     // 最近一局的历史榜单名次（v1.11，结算面板用）
     comets: 0,
     asteroids: 0,
     starsPlaced: 0,
@@ -232,7 +232,7 @@
     SETTINGS_KEY, STARS_KEY, ACHIEVEMENTS_KEY,
     // v1.10：挑战进度 / 每日挑战 / 额外任务 / 每关最佳记录
     CHALLENGE_KEY, DAILY_KEY, TASKS_KEY, RECORDS_KEY,
-    // v1.12：历史榜单与累计统计
+    // v1.11：历史榜单与累计统计
     STATS_KEY,
   ];
   // 存档异常反馈（M7）：localStorage 损坏/配额超限不再静默吞掉，
@@ -362,7 +362,7 @@
     catch (e) { setWarning('星级保存失败：本地存储不可用或已满'); return false; }
   }
   function getStars() { return Object.assign(Object.create(null), stars); }
-  // 星级分布（v1.12，星图总览面板展示用）：只统计常规关（隐藏关不计星）
+  // 星级分布（v1.11，星图总览面板展示用）：只统计常规关（隐藏关不计星）
   function getStarDistribution() {
     const out = { three: 0, two: 0, one: 0, none: 0 };
     for (let i = 0; i < regularLevelCount(); i++) {
@@ -390,7 +390,7 @@
   const REGULAR_LEVELS = CAMPAIGN_LEVELS.filter(function (lv) { return !lv.hidden; });
   function regularLevelCount() { return REGULAR_LEVELS.length; }
   function totalStarsMax() { return regularLevelCount() * STAR_MAX_PER_LEVEL; }
-  // 隐藏关集合（v1.12）：供「全部隐藏关通关」与「完美星图」判定使用。
+  // 隐藏关集合（v1.11）：供「全部隐藏关通关」与「完美星图」判定使用。
   // 通关与否以每关最佳记录里的 won 标记为准（recordRun 对隐藏关照常写入，且 won 只增不减）。
   const HIDDEN_LEVELS = CAMPAIGN_LEVELS.filter(function (lv) { return !!lv.hidden; });
   function countHiddenLevels() { return HIDDEN_LEVELS.length; }
@@ -471,7 +471,7 @@
       need: () => getTotalStars() >= 30 },
     { id: 'star_60',      name: '星河为证', desc: '累计获得 60 颗星',
       need: () => getTotalStars() >= 60 },
-    // 文案修正（v1.12）：判定一直用 totalStarsMax()（现为 40 常规关 × 3 = 120），
+    // 文案修正（v1.11）：判定一直用 totalStarsMax()（现为 40 常规关 × 3 = 120），
     // 旧文案写的 90 是加入第四章前的数字，属"文案与实战不符"，此处改为动态口径。
     { id: 'star_all',     name: '完美星域', desc: '集齐全部 ' + (regularLevelCount() * STAR_MAX_PER_LEVEL) + ' 颗星',
       need: () => getTotalStars() >= totalStarsMax() },
@@ -489,7 +489,7 @@
       need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.budgetLeft >= 200 },
     { id: 'survive_500',  name: '长明者', desc: '生存模式单局得分 ≥ 500',
       need: (s) => s.mode === 'survival' && s.score >= 500 },
-    // ===== v1.12 扩展（+12 项）：覆盖专精 / 协同 / 每日挑战 / 隐藏关 / 任务全清 / 无尽风暴 / 挑战进度 / 完美收集 =====
+    // ===== v1.11 扩展（+12 项）：覆盖专精 / 协同 / 每日挑战 / 隐藏关 / 任务全清 / 无尽风暴 / 挑战进度 / 完美收集 =====
     // 口径说明：
     //   · 判定只读 getCurrentRunStats() 的字段或本文件内的 getter，与既有成就同构（可独立测试）；
     //   · 无尽成就用 s.wave 而非 bestWaves —— updateBest() 在 evaluateAchievements() **之后**执行，
@@ -738,7 +738,7 @@
     return { record: Object.assign({}, next), newBest: newBest };
   }
 
-  // ===== 历史榜单与累计统计（v1.12）=====
+  // ===== 历史榜单与累计统计（v1.11）=====
   // 单一存档键 STATS_KEY，结构：
   //   { v: 1,
   //     totals: { plays:{mode:n}, wins:{mode:n}, timeSec, intercepted, hits, bestScore, bestWaves },
@@ -1018,9 +1018,9 @@
   }
   function getChallengeBest(idx) { return challenge.best[String(idx)] || null; }
 
-  // ===== 每日挑战存档（v1.10；v1.12 增加连胜）=====
+  // ===== 每日挑战存档（v1.10；v1.11 增加连胜）=====
   // 只保存"当天"的成绩；读取时若日期已变（跨日）会自动重置，无需定时器。
-  // v1.12 扩展三个**跨日保留**的元数据（不随当日成绩重置）：
+  // v1.11 扩展三个**跨日保留**的元数据（不随当日成绩重置）：
   //   streak       连续通关天数（同一日期重复通关只记一次，保证幂等）
   //   lastCleared  最近一次通关的日期键
   //   clearedTotal 累计通关天数
@@ -1092,7 +1092,7 @@
       cleared: fresh ? false : daily.cleared,
       bestScore: fresh ? 0 : daily.bestScore,
       bestWave: fresh ? 0 : daily.bestWave,
-      // v1.12：连胜元数据不受"跨日重置当日成绩"的影响
+      // v1.11：连胜元数据不受"跨日重置当日成绩"的影响
       streak: getDailyStreak(),
       lastCleared: daily.lastCleared || '',
       clearedTotal: Math.max(0, Math.round(Number(daily.clearedTotal) || 0)),
@@ -1385,7 +1385,7 @@
     daily = emptyDaily();
     tasksDone = Object.create(null);
     recordsByKey = Object.create(null);
-    stats = emptyStats();        // v1.12：统计与榜单（存档已删除，内存必须同步复位）
+    stats = emptyStats();        // v1.11：统计与榜单（存档已删除，内存必须同步复位）
     state.lastTask = null;
     state.lastRecord = null;
     state.lastDaily = null;
@@ -1546,8 +1546,8 @@
       : (state.mode === 'challenge' ? challengeModifiersFor(state.levelIndex) : []);
     state.blackholesPlaced = 0;
     state.specSwitches = 0;      // v1.11：专精互转次数逐局重置
-    state.specGiantPlaced = 0;   // v1.12：巨型专精放置数逐局重置
-    state.endlessStage = 0;      // v1.12：无尽阶段逐局重置（仅 endless 会在 startWave 里推进）
+    state.specGiantPlaced = 0;   // v1.11：巨型专精放置数逐局重置
+    state.endlessStage = 0;      // v1.11：无尽阶段逐局重置（仅 endless 会在 startWave 里推进）
     // isLastWave 必须显式复位：它只在 startWave 里被写入，跨局残留会让新模式/异常路径误判终局
     state.isLastWave = false;
     // 天体上限告警只记一次：跨局不复位会吞掉后续告警（排查困难）
@@ -1555,8 +1555,8 @@
     state.lastTask = null;
     state.lastRecord = null;
     state.lastDaily = null;
-    state.lastEnding = null;     // v1.12：结局文案逐局重置（否则上一局的结局会残留到新一局结算）
-    state.lastBoardRank = null;  // v1.12：榜单名次逐局重置
+    state.lastEnding = null;     // v1.11：结局文案逐局重置（否则上一局的结局会残留到新一局结算）
+    state.lastBoardRank = null;  // v1.11：榜单名次逐局重置
 
     // 减速额度 / 撤销历史 / 预警列表（P0-1 / P0-2 / P0-3）：每局从零开始。
     // 注意：timeScale 属会话级偏好，开局不重置（由额度耗尽机制兜底），
@@ -1749,7 +1749,7 @@
     state.bodies.push(body);
     state.starsPlaced++;
     if (isBH) state.blackholesPlaced++;                   // v1.10：任务 noBlackhole 判定用
-    // v1.12：统计本局放置的「巨型」专精星体数（成就 spec_giant_5 判定用）
+    // v1.11：统计本局放置的「巨型」专精星体数（成就 spec_giant_5 判定用）
     if (!isBH && def.spec === 'giant') state.specGiantPlaced = (state.specGiantPlaced || 0) + 1;
     recordPlacement(body, typeKey, def.cost);             // 记入撤销历史（P0-2）
     return { ok: true };
@@ -1809,15 +1809,15 @@
     return { ok: true, reason: '', refund: entry.cost };
   }
 
-  // ===== 无尽模式阶段与风暴波（v1.12）=====
-  // 节奏重写：把 v1.11 的"封顶后每超 1 单位 +10%"连续 ramp，升级为「阶段 + 每 10 波风暴」。
+  // ===== 无尽模式阶段与风暴波（v1.11）=====
+  // 节奏重写：把上一版的"封顶后每超 1 单位 +10%"连续 ramp，升级为「阶段 + 每 10 波风暴」。
   //   阶段划分：stage = floor((wave-1) / 10) → 第 1~10 波为阶段 0（基准），11~20 为阶段 1，依此类推。
   //   风暴波：wave % 10 === 0（第 10 / 20 / 30 … 波）——每个阶段的**收尾波**，额外涌入一小群分裂彗星。
   // 单调性（硬约束）：阶段阶段加成随 stage 非递减，基础 ramp 随 wave 非递减，两者相加 → 难度进度 t 非递减，
   // 因此 difficulty 单调不减、interval 单调不增、count 单调不减（风暴前锋只改单波构成，不改曲线参数）。
-  // 兼容性：阶段 0 的加成全为 1.0/0，故第 1~10 波与 v1.11 完全一致；阶段效果只在 endless 下生效。
+  // 兼容性：阶段 0 的加成全为 1.0/0，故第 1~10 波与上一版完全一致；阶段效果只在 endless 下生效。
   const ENDLESS_STAGE_SIZE = 10;
-  const ENDLESS_T_CAP = 2.1;              // 难度进度上限（v1.11 为 1.6；阶段加成需要更高上限才有意义）
+  const ENDLESS_T_CAP = 2.1;              // 难度进度上限（上一版为 1.6；阶段加成需要更高上限才有意义）
   const ENDLESS_STAGES = [
     // bump：叠加到难度进度 t；countMul：本波数量倍率；comet/splitter/disturberRatio：额外混入占比
     { bump: 0.00, countMul: 1.00, cometRatio: 0.00, splitterRatio: 0.00, disturberRatio: 0.00 },
@@ -1867,7 +1867,7 @@
     const cfg = state.level.waves;
     // 难度随 wave 在 [startDifficulty, endDifficulty] 区间线性插值，封顶 wave 数量由 difficultyRamp 推断
     let t = clamp(w * cfg.difficultyRamp, 0, 1);
-    // 无尽模式（v1.12）：基础连续 ramp（与 v1.11 同口径，保证第 1~10 波完全一致）+ 阶段加成
+    // 无尽模式（v1.11）：基础连续 ramp（与上一版同口径，保证第 1~10 波完全一致）+ 阶段加成
     if (state.mode === 'endless') {
       const base = t + Math.max(0, w * cfg.difficultyRamp - 1) * 0.10;
       t = Math.min(ENDLESS_T_CAP, base + endlessStageDef(endlessStageOf(w)).bump);
@@ -1894,8 +1894,8 @@
       return generateWaveDeterministic();
     }
     const p = waveParams();
-    // 无尽阶段（v1.12）：数量与特殊威胁占比按阶段加成。
-    // 生存模式 endless === null → 走与 v1.11 完全一致的原路径（连 rand 调用次数都保持一致）。
+    // 无尽阶段（v1.11）：数量与特殊威胁占比按阶段加成。
+    // 生存模式 endless === null → 走与上一版完全一致的原路径（连 rand 调用次数都保持一致）。
     const endless = (state.mode === 'endless') ? getEndlessStageInfo() : null;
     const baseCount = clamp(Math.round(p.count * (endless ? endless.countMul : 1)), 3, 20);
     const cometRatio = endless
@@ -1912,7 +1912,7 @@
     for (let i = 0; i < asteroidCount; i++) queue.push({ kind: 'asteroid', difficulty: p.difficulty });
     for (let i = 0; i < splitterCount; i++) queue.push({ kind: 'splitter', difficulty: p.difficulty });
     for (let i = 0; i < disturberCount; i++) queue.push({ kind: 'disturber', difficulty: p.difficulty });
-    // 风暴前锋（v1.12）：第 10/20/30… 波额外涌入一小群分裂彗星，让风暴波构成明显暴增
+    // 风暴前锋（v1.11）：第 10/20/30… 波额外涌入一小群分裂彗星，让风暴波构成明显暴增
     if (endless && endless.stormNow) {
       const extra = 2 + Math.min(2, endless.stage);
       for (let i = 0; i < extra; i++) queue.push({ kind: 'splitter', difficulty: p.difficulty });
@@ -1944,7 +1944,7 @@
     state.waveElapsed = 0;                 // 波次超时计时（H3）
     // 记录是否最后一波（闯关模式通关判定用）
     state.isLastWave = !!g.isLast;
-    // 无尽阶段与风暴提示（v1.12）：必须在 wave 自增之后读取；其它模式恒为 0，不影响任何既有行为
+    // 无尽阶段与风暴提示（v1.11）：必须在 wave 自增之后读取；其它模式恒为 0，不影响任何既有行为
     if (state.mode === 'endless') {
       const info = getEndlessStageInfo();
       state.endlessStage = info.stage;
@@ -1994,9 +1994,9 @@
       edge = randInt(0, 3);
       const spreadArc = lerp(0.60, 0.15, clamp(difficulty, 0, 1));
       spread = rand(-spreadArc, spreadArc);
-      // 类型差异（v1.12 补齐分裂彗星/干扰体，供无尽阶段混入）：
+      // 类型差异（v1.11 补齐分裂彗星/干扰体，供无尽阶段混入）：
       // 彗星快而小、分裂彗星更快更脆、干扰体慢而大（脉冲型）。
-      // 注意：彗星与陨石的分支取值与 rand 调用顺序与 v1.11 完全一致（生存模式零行为变化）。
+      // 注意：彗星与陨石的分支取值与 rand 调用顺序与上一版完全一致（生存模式零行为变化）。
       const speedBase = (kind === 'comet') ? rand(120, 200)
         : (kind === 'splitter') ? rand(100, 170)
         : (kind === 'disturber') ? rand(50, 85)
@@ -2317,7 +2317,7 @@
     state.shake = Math.max(state.shake, 6);
   }
 
-  // ===== 结局文案与完美收集（v1.12）=====
+  // ===== 结局文案与完美收集（v1.11）=====
   // 只对「闯关模式第 40 关（第四章终关）」与「两个隐藏关」在通关时给出专属结局文案。
   // 文案来源：章节结局在 CHAPTERS[3].ending；隐藏关结语在 window.STORY.hidden（内容层导出，
   // 刻意不写进关卡对象——关卡对象有 fixture 逐字段精确比对）。
@@ -2369,7 +2369,7 @@
     // 结算时清空选中态（操作面板由 input 层同步隐藏）
     state.selectedBody = null;
     updateBest();
-    // v1.12 结算链路（顺序即依赖）：结局文案 → 历史榜单 → 累计统计 → 弹结算面板。
+    // v1.11 结算链路（顺序即依赖）：结局文案 → 历史榜单 → 累计统计 → 弹结算面板。
     // 榜单要读 state.lastStars（recordRunStars 已写入）与 integerScore；统计为纯累加。
     state.lastEnding = getRunEnding();
     state.lastBoardRank = recordRunBoard();
@@ -2719,7 +2719,7 @@
         timeGroup.style.display = 'none';
       }
     }
-    // 无尽阶段胶囊（v1.12）：仅无尽模式显示「阶段 N · 距风暴 X 波」；风暴波整条转红。
+    // 无尽阶段胶囊（v1.11）：仅无尽模式显示「阶段 N · 距风暴 X 波」；风暴波整条转红。
     // 走 hudCache 脏检查：每帧比较 key，只有阶段/倒计时变化时才写 DOM 与 class。
     const stageGroup = document.getElementById('endlessStage');
     if (stageGroup) {
@@ -2992,7 +2992,7 @@
       hiddenInfo: isHiddenLevel() ? getHiddenUnlockInfo(state.levelIndex) : null,
       specSwitches: state.specSwitches || 0,
       synergyMaxBonus: maxSynergyBonus(),
-      // v1.12 扩展字段（只增不改）：专精 / 无尽阶段 / 结局 / 榜单 / 每日连胜 / 完美收集
+      // v1.11 扩展字段（只增不改）：专精 / 无尽阶段 / 结局 / 榜单 / 每日连胜 / 完美收集
       specGiantPlaced: state.specGiantPlaced || 0,
       endlessStage: state.endlessStage || 0,
       ending: state.lastEnding ? state.lastEnding.id : '',
@@ -3080,7 +3080,7 @@
     countHiddenLevels,
     getHiddenClearedCount,
     getStarDistribution,
-    // v1.12 结局文案 / 完美收集 / 无尽阶段 / 榜单与统计
+    // v1.11 结局文案 / 完美收集 / 无尽阶段 / 榜单与统计
     getRunEnding,
     getPerfectStory,
     isPerfectCollected,
@@ -3153,6 +3153,6 @@
   loadTasks();
   loadRecords();
   loadDaily();
-  // v1.12：历史榜单与累计统计（只读展示数据，损坏时回退默认并给出提示）
+  // v1.11：历史榜单与累计统计（只读展示数据，损坏时回退默认并给出提示）
   loadStats();
 })();

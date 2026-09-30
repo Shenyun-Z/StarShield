@@ -1,4 +1,4 @@
-// v1.12 叙事收束与成就扩展测试套件
+// v1.11 叙事收束与成就扩展测试套件
 //   A. 内容层结局文案：CHAPTERS[3].ending 与 window.STORY（隐藏关结语 / 完美星图）齐备，
 //      且**关卡对象未被注入新字段**（保住 test/fixtures/campaign-v1.11.json 的逐字段精确比对）
 //   B. 结局触发口径：仅闯关模式的第 40 关与两个隐藏关在通关时给文案；挑战/每日/失败/普通关均无
@@ -213,7 +213,7 @@ console.log('--- C. 成就清单与文案 ---');
     starAll && starAll.desc);
   const newIds = ['spec_giant_5', 'spec_switch_3', 'synergy_30', 'synergy_40', 'daily_first',
     'daily_streak_3', 'hidden_clear', 'hidden_all', 'task_all', 'endless_30', 'challenge_10', 'perfect'];
-  assert('v1.12 新增 12 项成就全部就位', newIds.every(id => ids.indexOf(id) >= 0),
+  assert('v1.11 新增 12 项成就全部就位', newIds.every(id => ids.indexOf(id) >= 0),
     newIds.filter(id => ids.indexOf(id) < 0).join(','));
 }
 
@@ -435,17 +435,17 @@ console.log('--- E. 幂等与存档兼容 ---');
     pending.length > 0 && s.game.takeNewAchievements().length === 0);
 }
 {
-  // 存档兼容：未知 id 丢弃、既有 id（含 v1.12 新增）保留
+  // 存档兼容：未知 id 丢弃、既有 id（含 v1.11 新增）保留
   const s = createSandbox({
     starshield_achievements: JSON.stringify({ first_win: 123, spec_giant_5: 456, unknown_key: 1 }),
   });
   const list = s.game.getAchievementList();
   const find = (id) => list.filter(a => a.id === id)[0];
   assert('已知既有 id 往返读取', find('first_win').unlocked === true);
-  assert('v1.12 新增 id 往返读取（不丢新成就进度）', find('spec_giant_5').unlocked === true);
+  assert('v1.11 新增 id 往返读取（不丢新成就进度）', find('spec_giant_5').unlocked === true);
   assert('未知 id 被忽略', list.every(a => a.id !== 'unknown_key'));
 }
 
-console.log(ok ? '\n=== v1.12 结局文案与成就扩展测试全部通过 ==='
-               : '\n=== v1.12 结局/成就测试存在失败 ===');
+console.log(ok ? '\n=== v1.11 结局文案与成就扩展测试全部通过 ==='
+               : '\n=== v1.11 结局/成就测试存在失败 ===');
 process.exit(ok ? 0 : 1);
