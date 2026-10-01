@@ -184,7 +184,9 @@
       let taskRow = '';
       if (lv.task && (selMode === 'campaign' || selMode === 'challenge' || selMode === 'daily')) {
         const done = game.isTaskDone(selMode, idx);
-        taskRow = `<div class="lc-task${done ? ' done' : ''}">${done ? '✦ 任务已完成' : '✦ 任务'}：${lv.task.text}</div>`;
+        taskRow = `<div class="lc-task${done ? ' done' : ''}">`
+          + `<svg class="ic ic-xs"><use href="#${done ? 'ic-check' : 'ic-target'}"/></svg>`
+          + `${done ? '任务已完成' : '任务'}：${lv.task.text}</div>`;
       }
       // 本关最佳记录（v1.10）：有记录才显示，避免空态噪声
       let recRow = '';
@@ -206,7 +208,7 @@
       }
       el.innerHTML = locked
         ? `
-          <div class="lc-name">${idx + 1} 关 · 未解锁<span class="badge">🔒</span></div>
+          <div class="lc-name">${idx + 1} 关 · 未解锁<span class="badge"><svg class="ic ic-xs"><use href="#ic-lock"/></svg></span></div>
           <div class="lc-desc">${lockMsg}</div>
         `
         : `
@@ -296,8 +298,21 @@
     renderCollection();
   }
 
+  // ===== 通用进度条（v1.13，成就 / 星图总览共用）=====
+  // 纯 innerHTML 字符串，不新增 createElement（避免影响 createdEls 类名计数断言）。
+  // label 左对齐、value 右对齐（等宽数字），轨道内填充宽度 = pct%（钳制 0~100）。
+  function panelProgress(label, value, pct) {
+    const v = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    return '<div class="panel-progress">'
+      + '<div class="pp-head"><span class="pp-label">' + label + '</span>'
+      + '<span class="pp-value">' + value + '</span></div>'
+      + '<div class="pp-track"><span class="pp-fill" style="width:' + v + '%"></span></div>'
+      + '</div>';
+  }
+
   // ===== 成就面板（P1-C）=====
   // 用 innerHTML 一次性渲染（避免 createElement 顺序影响既有测试对"首个创建节点"的检查）
+  // v1.13：顶部总进度条 + 按 ACHIEVEMENT_GROUPS 分区 + 组内进度 + 两列网格 + 图标徽标。
   function renderAchievements() {
     const list = document.getElementById('achieveList');
     const title = document.getElementById('achieveTitle');
@@ -306,13 +321,40 @@
     const items = game.getAchievementList();
     const done = items.filter(i => i.unlocked).length;
     if (title) title.textContent = `成就（${done}/${items.length}）`;
-    list.innerHTML = items.map(i =>
-      `<div class="achieve-item${i.unlocked ? ' unlocked' : ''}">`
-      + `<span class="ai-name">${i.unlocked ? '★ ' : '☆ '}${i.name}</span>`
-      + `<span class="ai-desc">${i.desc}</span>`
-      + `</div>`
-    ).join('');
-    if (btn) btn.textContent = (list.style.display === 'none') ? '展开成就' : '收起成就';
+    const pct = items.length ? (done / items.length) * 100 : 0;
+    // 分组表：优先取数据层单一真源；缺失时退化为单组，保证任何情况下都不漏渲染。
+    const groups = (game.ACHIEVEMENT_GROUPS && game.ACHIEVEMENT_GROUPS.length)
+      ? game.ACHIEVEMENT_GROUPS
+      : [{ id: 'meta', label: '成就', icon: 'ic-trophy' }];
+    const fallback = groups[groups.length - 1].id;
+    let html = panelProgress('总进度', '已解锁 ' + done + '/' + items.length + ' · '
+      + Math.round(pct) + '%', pct);
+    groups.forEach(g => {
+      // 防御式归并：未知/缺失 group 的条目并入最后一组，避免"加了成就却看不到"。
+      const bucket = items.filter(i => (i.group || fallback) === g.id);
+      if (!bucket.length) return;
+      const gDone = bucket.filter(i => i.unlocked).length;
+      html += '<div class="achieve-group">'
+        + '<div class="ag-head"><svg class="ic ic-sm"><use href="#' + g.icon + '"/></svg>'
+        + '<span class="ag-title">' + g.label + '</span>'
+        + '<span class="ag-count">' + gDone + '/' + bucket.length + '</span></div>'
+        + '<div class="ag-grid">'
+        + bucket.map(i =>
+            '<div class="achieve-item' + (i.unlocked ? ' unlocked' : '') + '">'
+            + '<span class="ai-badge"><svg class="ic ic-xs"><use href="#'
+            + (i.unlocked ? 'ic-check' : 'ic-lock') + '"/></svg></span>'
+            + '<span class="ai-name">' + i.name + '</span>'
+            + '<span class="ai-desc">' + i.desc + '</span>'
+            + '</div>'
+          ).join('')
+        + '</div>'
+        + '</div>';
+    });
+    list.innerHTML = html;
+    // v1.13：折叠按钮内含图标与箭头，文案必须写在独立 label 节点上
+    // （对按钮整体写 textContent 会把图标与箭头一并擦掉）。
+    setFoldState(btn, document.getElementById('achieveToggleLabel'),
+      list.style.display !== 'none', '展开成就', '收起成就');
   }
   // 展开/收起：只用 class 与 style，避免 classList.toggle（测试 stub 无该方法）
   function bindAchievements() {
@@ -322,12 +364,13 @@
     btn.addEventListener('click', () => {
       const showing = list.style.display !== 'none';
       list.style.display = showing ? 'none' : '';
-      btn.textContent = showing ? '展开成就' : '收起成就';
+      setFoldState(btn, document.getElementById('achieveToggleLabel'),
+        !showing, '展开成就', '收起成就');
     });
   }
 
   // ===== 星图总览面板（v1.11）=====
-  // 三块：收集进度 / 统计摘要 / 历史榜单（各模式前 5）。整体用 innerHTML 一次性拼装，
+  // 两块：收集进度 / 统计摘要（v1.13 移除各模式历史榜单）。整体用 innerHTML 一次性拼装，
   // 与成就面板同构（避免 createElement 顺序影响既有测试，且测试 stub 的 appendChild 是 no-op）。
   function fmtDuration(sec) {
     const total = Math.max(0, Math.round(Number(sec) || 0));
@@ -336,11 +379,22 @@
     if (m > 0) return m + ' 分 ' + (total % 60) + ' 秒';
     return total + ' 秒';
   }
-  function collectBlock(title, rows) {
-    return '<div class="collect-block"><div class="cb-title">' + title + '</div>'
-      + rows.map(r => '<div class="collect-row"><span class="cr-label">' + r[0]
-        + '</span><span class="cr-value">' + r[1] + '</span></div>').join('')
-      + '</div>';
+  // 内容块（v1.13）：标题前置内联图标（iconId 为 sprite symbol id，可为空）。
+  // rows 支持数组 [label, value] 或对象 { label, value, stack }；stack=true 时取值落到第二行并弱化。
+  function collectBlock(iconId, title, rows) {
+    const head = '<div class="cb-title">'
+      + (iconId ? '<svg class="ic ic-sm"><use href="#' + iconId + '"/></svg>' : '')
+      + '<span class="cb-text">' + title + '</span></div>';
+    const body = (rows || []).map(r => {
+      const row = r || {};
+      const label = Array.isArray(row) ? row[0] : row.label;
+      const value = Array.isArray(row) ? row[1] : row.value;
+      const stack = !Array.isArray(row) && row.stack;
+      return '<div class="collect-row' + (stack ? ' stack' : '') + '">'
+        + '<span class="cr-label">' + (label == null ? '' : label) + '</span>'
+        + '<span class="cr-value">' + (value == null ? '' : value) + '</span></div>';
+    }).join('');
+    return '<div class="collect-block">' + head + body + '</div>';
   }
   function renderCollection() {
     const list = document.getElementById('collectList');
@@ -370,62 +424,56 @@
     const chStars = game.getChallengeStarsTotal();
     const chUnlocked = game.getChallengeUnlocked();
     const d = game.getDailyState();
+    // 收集度（三面等权，v1.13）：星数 / 额外任务 / 隐藏关通关各自归一后取平均。
+    // 与 game.isPerfectCollected()「完美星图」判定同口径 —— 仅三者全满才为 100%。
+    const stars = game.getTotalStars();
+    const tasksDone = game.getTasksDoneCount();
+    const rStars = starMax > 0 ? stars / starMax : 0;
+    const rTasks = regular > 0 ? tasksDone / regular : 0;
+    const rHidden = hiddenTotal > 0 ? hiddenCleared / hiddenTotal : 1;
+    const collectPct = Math.round((rStars + rTasks + rHidden) / 3 * 100);
+    html.push(panelProgress('收集度', collectPct + '%', collectPct));
+
     const progress = [
-      ['闯关星数', game.getTotalStars() + '/' + starMax
+      { label: '闯关星数', value: stars + '/' + starMax
         + (dist ? '（3★ ' + dist.three + ' · 2★ ' + dist.two + ' · 1★ ' + dist.one
-          + ' · 未通关 ' + dist.none + '）' : '')],
-      ['额外任务', game.getTasksDoneCount() + '/' + regular],
-      ['隐藏关', '解锁 ' + hiddenUnlocked + '/' + hiddenTotal + ' · 通关 ' + hiddenCleared + '/' + hiddenTotal],
-      ['挑战进度', chUnlocked + '/' + regular + ' 关 · 挑战星 ' + chStars + '/' + starMax],
-      ['每日挑战', d ? ((d.cleared ? '今日已通关' : '今日未通关') + ' · 连胜 ' + d.streak
-        + ' 天 · 累计通关 ' + d.clearedTotal + ' 天') : '—'],
-      ['成就', achDone + '/' + ach.length],
+          + ' · 未通关 ' + dist.none + '）' : ''), stack: true },
+      { label: '额外任务', value: tasksDone + '/' + regular },
+      { label: '隐藏关', value: '解锁 ' + hiddenUnlocked + '/' + hiddenTotal
+        + ' · 通关 ' + hiddenCleared + '/' + hiddenTotal, stack: true },
+      { label: '挑战进度', value: chUnlocked + '/' + regular + ' 关 · 挑战星 ' + chStars + '/' + starMax, stack: true },
+      { label: '每日挑战', value: d ? ((d.cleared ? '今日已通关' : '今日未通关') + ' · 连胜 ' + d.streak
+        + ' 天 · 累计通关 ' + d.clearedTotal + ' 天') : '—', stack: true },
+      { label: '成就', value: achDone + '/' + ach.length },
     ];
-    html.push(collectBlock('收集进度', progress));
+    html.push(collectBlock('ic-target', '收集进度', progress));
 
     /* --- 2) 统计摘要 --- */
     const t = game.getStatsTotals();
-    const modeNames = game.getBoardModeNames();
-    const modes = (game.BOARD_MODES || []).slice();
+    const modeNames = game.getModeNames();
+    const modes = (game.STATS_MODES || []).slice();
     let totalPlays = 0, totalWins = 0;
     modes.forEach(m => { totalPlays += (t.plays[m] || 0); totalWins += (t.wins[m] || 0); });
     const summary = [
-      ['累计游戏时长', fmtDuration(t.timeSec)],
-      ['累计拦截威胁', String(t.intercepted)],
-      ['累计母星受击', String(t.hits)],
-      ['累计场次 / 胜场', totalPlays + ' / ' + totalWins
-        + (totalPlays > 0 ? '（胜率 ' + Math.round(totalWins / totalPlays * 100) + '%）' : '')],
-      ['历史最高分', t.bestScore > 0 ? String(t.bestScore) : '—'],
-      ['历史最高波数', t.bestWaves > 0 ? t.bestWaves + ' 波' : '—'],
+      { label: '累计游戏时长', value: fmtDuration(t.timeSec) },
+      { label: '累计拦截威胁', value: String(t.intercepted) },
+      { label: '累计母星受击', value: String(t.hits) },
+      { label: '累计场次 / 胜场', value: totalPlays + ' / ' + totalWins
+        + (totalPlays > 0 ? '（胜率 ' + Math.round(totalWins / totalPlays * 100) + '%）' : '') },
+      { label: '历史最高分', value: t.bestScore > 0 ? String(t.bestScore) : '—' },
+      { label: '历史最高波数', value: t.bestWaves > 0 ? t.bestWaves + ' 波' : '—' },
     ];
     modes.forEach(m => {
       const p = t.plays[m] || 0, w = t.wins[m] || 0;
-      summary.push([modeNames[m] || m, p + ' 场 · ' + w + ' 胜'
-        + (p > 0 ? '（' + Math.round(w / p * 100) + '%）' : '')]);
+      summary.push({ label: modeNames[m] || m, value: p + ' 场 · ' + w + ' 胜'
+        + (p > 0 ? '（' + Math.round(w / p * 100) + '%）' : '') });
     });
-    html.push(collectBlock('统计摘要', summary));
-
-    /* --- 3) 历史榜单 --- */
-    const boards = game.getBoards();
-    modes.forEach(m => {
-      const arr = boards[m] || [];
-      if (!arr.length) {
-        html.push(collectBlock((modeNames[m] || m) + '榜', [['—', '暂无成绩']]));
-        return;
-      }
-      const rows = arr.map((e, i) => {
-        const parts = [e.score + ' 分'];
-        if (e.wave > 0) parts.push(e.wave + ' 波');
-        if (e.levelName) parts.push(e.levelName + (e.hidden ? '（隐藏）' : ''));
-        if (e.date) parts.push(e.date);
-        return [(i + 1) + '.', parts.join(' · ')];
-      });
-      html.push(collectBlock((modeNames[m] || m) + '榜（前 ' + (game.BOARD_SIZE || 5) + '）', rows));
-    });
+    html.push(collectBlock('ic-budget', '统计摘要', summary));
 
     list.innerHTML = html.join('');
     if (title) title.textContent = '星图总览' + (perfect ? '（100% 已达成）' : '');
-    if (btn) btn.textContent = (list.style.display === 'none') ? '展开总览' : '收起总览';
+    setFoldState(btn, document.getElementById('collectToggleLabel'),
+      list.style.display !== 'none', '展开总览', '收起总览');
   }
   function bindCollection() {
     const btn = document.getElementById('collectToggle');
@@ -434,7 +482,8 @@
     btn.addEventListener('click', () => {
       const showing = list.style.display !== 'none';
       list.style.display = showing ? 'none' : '';
-      btn.textContent = showing ? '展开总览' : '收起总览';
+      setFoldState(btn, document.getElementById('collectToggleLabel'),
+        !showing, '展开总览', '收起总览');
     });
   }
 
@@ -452,9 +501,9 @@
     if (mode === selMode && levelIndex === selLevelIndex) return;
     selMode = mode;
     selLevelIndex = levelIndex || 0;
-    // 同步模式卡片高亮
+    // 同步模式卡片高亮（只用 add/remove：测试 stub 的 classList 没有 toggle）
     document.querySelectorAll('.mode-card').forEach(c => {
-      c.classList.toggle('selected', c.dataset.mode === selMode);
+      if (c.dataset.mode === selMode) c.classList.add('selected'); else c.classList.remove('selected');
     });
     renderLevelCards();
     renderCtaHint();
@@ -532,11 +581,14 @@
         undoBtn.disabled = dis;
       }
     }
-    // 预警（P0-3）/ 预测线（P0-4 持久化）：开关态写回按钮
+    // 预警（P0-3）/ 预测线（P0-4 持久化）：v1.13 起这两个开关迁入设置面板。
+    // 设置行内含图标与说明子节点，故不再写按钮自身 textContent（会擦掉子节点）：
+    // 改为 `.on` 类驱动胶囊开关 + 独立状态节点显示「开 / 关」。
     const warnBtn = ui('warnBtn');
-    setBtnText(warnBtn, '预警：' + (st.showWarnings ? '开' : '关'));
     setBtnClass(warnBtn, 'on', !!st.showWarnings, 'warnOn');
-    setBtnText(ui('hintBtn'), '预测：' + (st.showHint ? '开' : '关'));
+    setBtnClass(ui('hintBtn'), 'on', !!st.showHint, 'hintOn');
+    setBpText(ui('warnState'), st.showWarnings ? '开' : '关');
+    setBpText(ui('hintState'), st.showHint ? '开' : '关');
   }
   // 撤销最近放置：成功/失败都给轻提示（P0-2）
   function doUndo() {
@@ -755,18 +807,23 @@
         const next = !game.state.showWarnings;
         game.setSetting('showWarnings', next);
         syncControlButtons();
+        syncSettingsUI();
         flashMessage(next ? '撞母星预警：开' : '撞母星预警：关');
       });
     }
+    // 音效开关（持久化由 audio.js 自管；本层只同步设置行视觉状态）
     audioBtn.addEventListener('click', () => {
       const on = !audio.isEnabled();
       audio.setEnabled(on);
-      audioBtn.textContent = '音效：' + (on ? '开' : '关');
+      syncSettingsUI();
+      flashMessage(on ? '音效：开' : '音效：关');
     });
     // 预测线开关：状态持久化（P0-4）
     hintBtn.addEventListener('click', () => {
       game.setSetting('showHint', !game.state.showHint);
       syncControlButtons();
+      syncSettingsUI();
+      flashMessage(game.state.showHint ? '预测线：开' : '预测线：关');
     });
     restartBtn.addEventListener('click', () => {
       if (restartBtn.dataset.armed === '1') {
@@ -776,17 +833,17 @@
           levelIndex: game.state.levelIndex,
         });
         restartBtn.dataset.armed = '0';
-        restartBtn.textContent = '重新开始';
+        setLabel('restartLabel', '重新开始');
         restartBtn.classList.remove('armed');
         return;
       }
       restartBtn.dataset.armed = '1';
-      restartBtn.textContent = '确认重开？';
+      setLabel('restartLabel', '确认重开？');
       restartBtn.classList.add('armed');
       clearTimeout(restartBtn._t);
       restartBtn._t = setTimeout(() => {
         restartBtn.dataset.armed = '0';
-        restartBtn.textContent = '重新开始';
+        setLabel('restartLabel', '重新开始');
         restartBtn.classList.remove('armed');
       }, 3000);
     });
@@ -795,32 +852,32 @@
       if (menuBtn.dataset.armed === '1') {
         game.backToMenu();
         menuBtn.dataset.armed = '0';
-        menuBtn.textContent = '返回菜单';
+        setLabel('menuLabel', '返回菜单');
         return;
       }
       menuBtn.dataset.armed = '1';
-      menuBtn.textContent = '确认返回？';
+      setLabel('menuLabel', '确认返回？');
       clearTimeout(menuBtn._t);
       menuBtn._t = setTimeout(() => {
         menuBtn.dataset.armed = '0';
-        menuBtn.textContent = '返回菜单';
+        setLabel('menuLabel', '返回菜单');
       }, 3000);
     });
-    // 游戏内「清除进度」（二次确认）
+    // 游戏内「清除进度」（二次确认）：v1.13 起位于暂停覆盖层的危险区
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
         if (clearBtn.dataset.armed === '1') {
           doClearProgress();
           clearBtn.dataset.armed = '0';
-          clearBtn.textContent = '清除进度';
+          setLabel('clearLabel', '清除进度');
           return;
         }
         clearBtn.dataset.armed = '1';
-        clearBtn.textContent = '确认清除？';
+        setLabel('clearLabel', '确认清除？');
         clearTimeout(clearBtn._t);
         clearBtn._t = setTimeout(() => {
           clearBtn.dataset.armed = '0';
-          clearBtn.textContent = '清除进度';
+          setLabel('clearLabel', '清除进度');
         }, 3000);
       });
     }
@@ -834,7 +891,7 @@
     selMode = 'survival';
     selLevelIndex = 0;
     document.querySelectorAll('.mode-card').forEach(c => {
-      c.classList.toggle('selected', c.dataset.mode === selMode);
+      if (c.dataset.mode === selMode) c.classList.add('selected'); else c.classList.remove('selected');
     });
     renderLevelCards();
     renderCtaHint();
@@ -865,6 +922,7 @@
 
   function pointerDown(e) {
     if (!game.state.gameStarted || game.state.gameOver) return;
+    if (game.isPaused()) return;                               // v1.13：暂停中不允许布防
     if (e.pointerType === 'mouse' && e.button !== 0) return;   // 只响应鼠标左键
     if (placing) return;                                       // 已有拖拽进行中，忽略第二根手指
     const p = canvasPoint(e);
@@ -1166,22 +1224,6 @@
         endBox.innerHTML = '';
       }
     }
-    // 历史榜单名次（v1.11）：进前 5 名才提示（未上榜不显示，避免"人人都上榜"的廉价感）
-    const boardBox = document.getElementById('resultBoard');
-    if (boardBox) {
-      const br = game.state.lastBoardRank;
-      const modeNames = game.getBoardModeNames();
-      if (br && Number.isFinite(br.rank) && br.rank > 0 && br.entry) {
-        boardBox.className = 'result-board new';
-        boardBox.textContent = '★ 进入' + (modeNames[br.mode] || br.mode) + '榜第 ' + br.rank + ' 名'
-          + '（前 ' + br.size + '）· ' + br.entry.score + ' 分'
-          + (br.entry.wave > 0 ? ' / ' + br.entry.wave + ' 波' : '');
-        boardBox.style.display = '';
-      } else {
-        boardBox.style.display = 'none';
-        boardBox.textContent = '';
-      }
-    }
     // 结算面板「下一关」按钮（v1.12）：只依据"下一关**确实存在于本模式的关卡池里**"。
     //   · 闯关：非隐藏关（隐藏关是独立挑战关，没有"下一关"语义）且 索引+1 < 闯关池长度（42）
     //   · 挑战：索引+1 < 挑战池长度（40）→ 通关第 40 关后按钮自动消失
@@ -1272,15 +1314,15 @@
         if (clearBtn.dataset.armed === '1') {
           doClearProgress();
           clearBtn.dataset.armed = '0';
-          clearBtn.textContent = '清除进度';
+          setLabel('resultClearLabel', '清除进度');
           return;
         }
         clearBtn.dataset.armed = '1';
-        clearBtn.textContent = '确认清除？';
+        setLabel('resultClearLabel', '确认清除？');
         clearTimeout(clearBtn._t);
         clearBtn._t = setTimeout(() => {
           clearBtn.dataset.armed = '0';
-          clearBtn.textContent = '清除进度';
+          setLabel('resultClearLabel', '清除进度');
         }, 3000);
       });
     }
@@ -1294,19 +1336,193 @@
       if (btn.dataset.armed === '1') {
         doClearProgress();
         btn.dataset.armed = '0';
-        btn.textContent = '一键清除进度';
+        setLabel('menuClearLabel', '一键清除进度');
         return;
       }
       btn.dataset.armed = '1';
-      btn.textContent = '确认清除全部？';
+      setLabel('menuClearLabel', '确认清除全部？');
       clearTimeout(btn._t);
       btn._t = setTimeout(() => {
         btn.dataset.armed = '0';
-        btn.textContent = '一键清除进度';
+        setLabel('menuClearLabel', '一键清除进度');
       }, 3000);
     });
   }
   window.__showResult = showResult;
+
+  // ===== 暂停 / 设置（v1.13）=====
+  // 暂停的唯一真源是 game.state.paused：stepFrame 顶部早退，冻结物理、gameTime、黑洞寿命、
+  // 减速额度、波次计时与生存存活分。本层只负责入口、覆盖层显隐与摘要展示。
+  // 两条硬约束：
+  //   ① 主循环不得因暂停提前 return（robustness 的 H1 要求每帧恰好一次 rAF 调度）；
+  //   ② 不改写 state.timeScale（loop-mechanics / result-actions 直读该字段判「开局即常速」）。
+  let settingsOpen = false;
+
+  // 按钮文案节点：二次确认类按钮内含图标，文案必须写在独立 label 上（写 textContent 会擦掉图标）
+  function setLabel(id, txt) { setBpText(ui(id), txt); }
+  // 折叠面板状态：文案写 label，展开态用 .open 驱动箭头旋转（stub 无 classList.toggle，只用 add/remove）
+  function setFoldState(btn, labelEl, open, openText, closeText) {
+    if (labelEl) {
+      const txt = open ? closeText : openText;
+      if (labelEl.textContent !== txt) labelEl.textContent = txt;
+    }
+    if (btn) {
+      if (open) btn.classList.add('open'); else btn.classList.remove('open');
+    }
+  }
+
+  function openSettings(from) {
+    const el = ui('settings');
+    if (!el) return;
+    settingsOpen = true;
+    if (el.dataset) el.dataset.from = (from === 'pause') ? 'pause' : 'menu';
+    el.classList.remove('hidden');
+    syncSettingsUI();
+  }
+  function closeSettings() {
+    settingsOpen = false;
+    const el = ui('settings');
+    if (el) el.classList.add('hidden');
+  }
+
+  // 「减少动效」→ html[data-motion]（CSS 侧统一降级为接近瞬时；系统偏好由 @media 兜底）。
+  // documentElement 在部分测试桩里不存在 → 整段 try/catch 失败静默（纯视觉偏好，绝不影响主循环）。
+  function applyMotionPref(reduced) {
+    try {
+      const root = document && document.documentElement;
+      if (root && root.dataset) root.dataset.motion = reduced ? 'reduced' : 'full';
+    } catch (e) {}
+  }
+
+  // 主音量应用（audio.js 在部分测试沙箱里未加载 → typeof 守卫；失败静默，纯偏好项）
+  function applyVolumePref(v) {
+    if (typeof audio === 'undefined' || !audio || typeof audio.setVolume !== 'function') return;
+    try { audio.setVolume(v); } catch (e) {}
+  }
+
+  // 设置行状态同步（主循环每帧调用；签名不变则零 DOM 写入）
+  function syncSettingsUI() {
+    const st = game.state;
+    // 注意：部分测试沙箱不加载 audio.js（audio 未声明）→ 必须用 typeof 守卫，
+    // 否则 init 期同步设置行会抛 ReferenceError（audio.isEnabled 的取用方式不安全）。
+    const audioOn = (typeof audio !== 'undefined' && audio && typeof audio.isEnabled === 'function')
+      ? !!audio.isEnabled() : true;
+    const volNum = Number(st.volume);
+    const volPct = Math.round(clamp01(Number.isFinite(volNum) ? volNum : 0.8) * 100);
+    const sig = (st.showHint ? '1' : '0') + (st.showWarnings ? '1' : '0')
+      + (audioOn ? '1' : '0') + (st.reduceMotion ? '1' : '0') + ':' + volPct;
+    if (uiCache.settingsSig === sig) return;
+    uiCache.settingsSig = sig;
+    setBtnClass(ui('warnBtn'), 'on', !!st.showWarnings, 'warnOn');
+    setBtnClass(ui('hintBtn'), 'on', !!st.showHint, 'hintOn');
+    setBtnClass(ui('audioBtn'), 'on', audioOn, 'audioOn');
+    setBtnClass(ui('motionBtn'), 'on', !!st.reduceMotion, 'motionOn');
+    setBpText(ui('warnState'), st.showWarnings ? '开' : '关');
+    setBpText(ui('hintState'), st.showHint ? '开' : '关');
+    setBpText(ui('audioState'), audioOn ? '开' : '关');
+    setBpText(ui('motionState'), st.reduceMotion ? '开' : '关');
+    applyMotionPref(!!st.reduceMotion);
+    // 主音量滑条：值回写只在变化时发生（拖动过程中值已一致，不会抖动）
+    const range = ui('volumeRange');
+    if (range) {
+      const v = String(volPct);
+      if (range.value !== v) range.value = v;
+    }
+    setBpText(ui('volumeState'), volPct + '%');
+    applyVolumePref(volPct / 100);
+  }
+
+  // 暂停覆盖层：显隐与摘要都走脏检查。暂停期间游戏态不会变化，故摘要只在「进入暂停」那一帧刷新一次
+  // （避免每帧调用 getCurrentRunStats 做无谓计算）。
+  function syncPauseUI() {
+    const el = ui('pause');
+    if (!el) return;
+    const on = game.isPaused();
+    if (uiCache.pauseOn !== on) {
+      uiCache.pauseOn = on;
+      if (on) el.classList.remove('hidden'); else el.classList.add('hidden');
+      if (!on && settingsOpen) closeSettings();     // 继续游戏时收起设置面板，避免遮挡游玩区
+      if (on) uiCache.pauseFilled = false;          // 强制刷新一次摘要
+    }
+    if (!on || uiCache.pauseFilled) return;
+    uiCache.pauseFilled = true;
+    const st = game.state;
+    const sm = game.slowMotionState();
+    const s = game.getCurrentRunStats();
+    const MODE_TAG = { campaign: '闯关', challenge: '挑战', daily: '每日', endless: '无尽', survival: '生存' };
+    setBpText(ui('pauseSub'), (MODE_TAG[st.mode] || '生存') + ' · ' + (st.level ? st.level.name : ''));
+    setBpText(ui('pauseWave'), (s.totalWaves > 0) ? (st.wave + '/' + s.totalWaves) : String(st.wave));
+    setBpText(ui('pauseScore'), String(s.score));
+    setBpText(ui('pauseCleared'), String(s.cleared));
+    setBpText(ui('pauseSlow'), sm.disabled ? '本关禁用' : (Math.round(sm.quota * 10) / 10) + 's');
+  }
+
+  function bindPause() {
+    const pauseBtn = ui('pauseBtn');
+    if (pauseBtn) pauseBtn.addEventListener('click', () => {
+      const on = game.togglePause();
+      syncPauseUI();
+      flashMessage(on ? '已暂停（按 P 继续）' : '继续游戏');
+    });
+    const resumeBtn = ui('pauseResume');
+    if (resumeBtn) resumeBtn.addEventListener('click', () => {
+      game.setPaused(false);
+      syncPauseUI();
+    });
+    const psBtn = ui('pauseSettingsBtn');
+    if (psBtn) psBtn.addEventListener('click', () => openSettings('pause'));
+    syncPauseUI();
+  }
+
+  function bindSettings() {
+    const menuBtn = ui('menuSettingsBtn');
+    if (menuBtn) menuBtn.addEventListener('click', () => openSettings('menu'));
+    const closeBtn = ui('settingsClose');
+    if (closeBtn) closeBtn.addEventListener('click', closeSettings);
+    // 「减少动效」：写入设置存档（键白名单已扩展），并立即作用到 html[data-motion]
+    const motionBtn = ui('motionBtn');
+    if (motionBtn) motionBtn.addEventListener('click', () => {
+      const next = !game.state.reduceMotion;
+      game.setSetting('reduceMotion', next);
+      syncSettingsUI();
+      flashMessage(next ? '已减少动效' : '已恢复完整动效');
+    });
+    // 主音量滑条：拖动即时生效（input 事件）并落盘到设置存档
+    const range = ui('volumeRange');
+    if (range && range.addEventListener) {
+      range.addEventListener('input', () => {
+        const pct = Math.max(0, Math.min(100, Math.round(Number(range.value) || 0)));
+        const v = pct / 100;
+        game.setSetting('volume', v);
+        applyVolumePref(v);
+        syncSettingsUI();
+        flashMessage('主音量：' + pct + '%');
+      });
+    }
+    // 设置面板内的「清除全部进度」（与其它清除入口同一套二次确认模式）
+    const sc = ui('settingsClearProg');
+    if (sc) sc.addEventListener('click', () => {
+      if (sc.dataset.armed === '1') {
+        doClearProgress();
+        sc.dataset.armed = '0';
+        setLabel('settingsClearLabel', '清除全部进度');
+        return;
+      }
+      sc.dataset.armed = '1';
+      setLabel('settingsClearLabel', '确认清除全部？');
+      clearTimeout(sc._t);
+      sc._t = setTimeout(() => {
+        sc.dataset.armed = '0';
+        setLabel('settingsClearLabel', '清除全部进度');
+      }, 3000);
+    });
+    // 点击遮罩空白处关闭设置面板
+    const el = ui('settings');
+    if (el && el.addEventListener) {
+      el.addEventListener('click', (e) => { if (e && e.target === el) closeSettings(); });
+    }
+    syncSettingsUI();
+  }
 
   // ===== 主循环 =====
   // 用 rAF 提供的时间戳计算真实帧间隔并交给 game.stepFrame 做固定步累加，
@@ -1338,6 +1554,8 @@
       game.updateHud();
       // 控制条状态（减速额度 / 撤销可用性 / 开关态）+ 星体操作面板 + 轻提示
       syncControlButtons();
+      syncSettingsUI();     // v1.13：设置行状态（含「减少动效」→ html[data-motion]）
+      syncPauseUI();        // v1.13：暂停覆盖层显隐与摘要（脏检查，暂停中零额外计算）
       syncBodyPanel();
       syncPropBar();
       syncBossBar();
@@ -1384,23 +1602,43 @@
     bindStartButton();
     bindStarBar();
     bindControls();
+    bindPause();          // v1.13：暂停（控制条按钮 + 暂停覆盖层）
+    bindSettings();       // v1.13：设置面板（主菜单与暂停层共用同一实例）
     bindResultActions();
     bindMenuClear();
     bindAchievements();
     bindCollection();
     bindBodyPanel();
     bindPropBar();
-    // Z 键撤销（P0-2）、Esc 取消选中与道具激活（P1-B / P2）：与按钮同源，避免两套判定逻辑
+    // 键盘：P 暂停/继续；Esc 优先级 = 关闭设置 → 取消选中星体/已选道具 → 暂停/继续；
+    // Z 撤销（P0-2，暂停期间屏蔽，避免暂停中产生状态分叉）。与按钮同源，避免两套判定逻辑。
     window.addEventListener('keydown', (e) => {
-      if (!e || !game.state.gameStarted || game.state.gameOver) return;
+      if (!e) return;
       const k = String(e.key || '').toLowerCase();
-      if (k === 'z') doUndo();
-      else if (k === 'escape' || k === 'esc') {
-        game.clearSelection();
-        selProp = null;
-        syncBodyPanel();
-        syncPropBar();
+      // 设置面板在菜单态也能打开 → 关闭动作必须放在 gameStarted 守卫之前
+      if (settingsOpen && (k === 'escape' || k === 'esc')) { closeSettings(); return; }
+      if (!game.state.gameStarted || game.state.gameOver) return;
+      if (k === 'p') {
+        if (settingsOpen) closeSettings();      // P 是全局暂停开关：先收起设置，再切换暂停
+        game.togglePause();
+        syncPauseUI();
+        return;
       }
+      if (k === 'escape' || k === 'esc') {
+        if (settingsOpen) { closeSettings(); return; }
+        if (game.state.selectedBody || selProp) {
+          game.clearSelection();
+          selProp = null;
+          syncBodyPanel();
+          syncPropBar();
+          return;
+        }
+        game.setPaused(!game.isPaused());
+        syncPauseUI();
+        return;
+      }
+      if (game.isPaused()) return;        // 暂停中屏蔽其余快捷键
+      if (k === 'z') doUndo();
     });
     canvas.addEventListener('pointerdown', pointerDown);
     window.addEventListener('pointermove', pointerMove);
@@ -1428,6 +1666,7 @@
       console.warn('StarShield: 主循环已恢复');
       loop();
     };
+    syncSettingsUI();     // v1.13：首帧前应用「减少动效」偏好（避免进场瞬间的动效闪烁）
     loop();
   }
 

@@ -2,10 +2,10 @@
 //   A. 无尽阶段表：确定性、逐段非递减、风暴波判定（wave % 10 === 0）
 //   B. 无尽节奏：第 1~10 波与上一发布版（v1.10）口径完全一致；难度进度单调不减；生存模式零漂移
 //   C. 风暴波构成：风暴前锋混入分裂彗星、阶段混入特殊威胁、提示与 HUD 阶段号；生存模式不受影响
-//   D. 历史榜单：排序指标（无尽比波数 / 其余比分数）、5 条截断、名次返回、落盘
+//   D. 模式统计隔离：挑战成绩只进各自模式统计，不污染生存/无尽与既有战绩口径
 //   E. 累计统计：场次/胜场/时长/拦截/受击累加、单局只累加一次（幂等）、模式互不污染
 //   F. 存档健壮性：损坏回退、缺字段回退、清除进度删除新键并复位内存、starshield_setup 保留
-//   G. 展示层：结算面板结局文案与上榜名次、菜单星图总览面板渲染
+//   G. 展示层：结算面板结局文案、菜单星图总览面板渲染
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -292,59 +292,29 @@ console.log('--- C. 风暴波构成 ---');
   assert('风暴期间仍在推进波次（未软锁）', st.wave > 19 || st.gameOver, 'wave=' + st.wave);
 }
 
-/* ============ D. 历史榜单 ============ */
-console.log('--- D. 历史榜单 ---');
+/* ============ D. 模式统计隔离 ============ */
+console.log('--- D. 模式统计隔离 ---');
 {
-  const s = createSandbox({ starshield_campaign_unlocked: '40' });
+  // 挑战成绩只进挑战统计，不污染生存/无尽场次与既有 bestScore / bestWaves 口径
+  const s = createSandbox({ starshield_challenge: JSON.stringify({ unlocked: 40 }) });
   const g = s.game;
-  g.startGame({ mode: 'campaign', levelIndex: 0 });
+  const survivalBefore = g.bestForMode('survival');
+  const wavesBefore = g.getBestWaves();
+  g.startGame({ mode: 'challenge', levelIndex: 0 });
   const st = g.state;
   st.timeScale = 1;
   st.scoreIntercept = 100;
   st.bodies = st.bodies.filter(b => b.type === 'planet');
   st.waveActive = true; st.waveQueue = []; st.waveElapsed = 40; st.isLastWave = true;
   g.stepFrame(DT);
-  assert('首局结算：闯关榜写入 1 条', g.getBoard('campaign').length === 1);
-  assert('首局即第 1 名', st.lastBoardRank && st.lastBoardRank.rank === 1,
-    JSON.stringify(st.lastBoardRank && st.lastBoardRank.rank));
-  assert('榜单条目含模式/分数/波数/关卡名/日期',
-    (() => {
-      const e = g.getBoard('campaign')[0];
-      return e.mode === 'campaign' && Number.isFinite(e.score) && e.level === 0
-        && typeof e.levelName === 'string' && e.levelName.length > 0
-        && /^\d{4}-\d{2}-\d{2}$/.test(e.date);
-    })(), JSON.stringify(g.getBoard('campaign')[0]));
-  assert('榜单落盘', !!s.ls.getItem('starshield_stats'));
-  // 同一局重复结算不得重复写入（endGame 的 gameOver 护栏）
-  const before = g.getBoard('campaign').length;
-  g.stepFrame(DT);
-  assert('同一局不会重复写入榜单', g.getBoard('campaign').length === before);
+  const t = g.getStatsTotals();
+  assert('挑战模式场次记入挑战统计', t.plays.challenge === 1 && t.wins.challenge === 1);
+  assert('挑战模式不污染生存/无尽场次', t.plays.survival === 0 && t.plays.endless === 0);
+  assert('挑战模式不污染既有 bestScore / bestWaves',
+    g.bestForMode('survival') === survivalBefore && g.getBestWaves() === wavesBefore);
 }
 {
-  // 5 条截断 + 分数降序：连续通关 7 个关卡，分数依次递增
-  const s = createSandbox({ starshield_campaign_unlocked: '40' });
-  const g = s.game;
-  const scores = [];
-  for (let i = 0; i < 7; i++) {
-    g.startGame({ mode: 'campaign', levelIndex: i });
-    const st = g.state;
-    st.timeScale = 1;
-    st.scoreIntercept = (i + 1) * 10;                 // 10,20,…,70
-    st.bodies = st.bodies.filter(b => b.type === 'planet');
-    st.waveActive = true; st.waveQueue = []; st.waveElapsed = 40; st.isLastWave = true;
-    g.stepFrame(DT);
-    scores.push(g.getBoard('campaign')[0].score);
-  }
-  const board = g.getBoard('campaign');
-  assert('榜单最多保留 5 条', board.length === 5, 'n=' + board.length);
-  let desc = true;
-  for (let i = 1; i < board.length; i++) if (board[i].score > board[i - 1].score) desc = false;
-  assert('榜单按分数降序', desc, board.map(e => e.score).join(','));
-  assert('最低分的一局被挤出榜（截断生效）', board[board.length - 1].score >= scores[1],
-    'min=' + board[board.length - 1].score + ' second=' + scores[1]);
-}
-{
-  // 无尽榜排序指标：波数优先
+  // 无尽模式：阵亡结算正常推进 bestWaves（与榜单无关的既有口径）
   const s = createSandbox();
   const g = s.game;
   const die = (wave) => {
@@ -360,31 +330,7 @@ console.log('--- D. 历史榜单 ---');
   };
   assert('无尽第 5 波阵亡可正常结算', die(5) === true);
   assert('无尽第 9 波阵亡可正常结算', die(9) === true);
-  const board = g.getBoard('endless');
-  assert('无尽榜按波数降序排列', board.length === 2 && board[0].wave === 9 && board[1].wave === 5,
-    board.map(e => e.wave).join(','));
-  assert('无尽榜不影响既有 bestWaves 口径', g.getBestWaves() === 9, 'best=' + g.getBestWaves());
-}
-{
-  // 模式隔离：挑战/每日成绩只进各自榜单，不污染生存/无尽记录
-  const s = createSandbox({ starshield_challenge: JSON.stringify({ unlocked: 40 }) });
-  const g = s.game;
-  const survivalBefore = g.bestForMode('survival');
-  const wavesBefore = g.getBestWaves();
-  g.startGame({ mode: 'challenge', levelIndex: 0 });
-  const st = g.state;
-  st.timeScale = 1;
-  st.scoreIntercept = 100;
-  st.bodies = st.bodies.filter(b => b.type === 'planet');
-  st.waveActive = true; st.waveQueue = []; st.waveElapsed = 40; st.isLastWave = true;
-  g.stepFrame(DT);
-  const t = g.getStatsTotals();
-  assert('挑战模式场次记入挑战榜', t.plays.challenge === 1 && t.wins.challenge === 1);
-  assert('挑战模式不污染生存/无尽场次', t.plays.survival === 0 && t.plays.endless === 0);
-  assert('挑战模式不污染既有 bestScore / bestWaves',
-    g.bestForMode('survival') === survivalBefore && g.getBestWaves() === wavesBefore);
-  assert('挑战榜有 1 条记录', g.getBoard('challenge').length === 1);
-  assert('生存榜仍为空', g.getBoard('survival').length === 0);
+  assert('无尽阵亡推进 bestWaves（取最高波数）', g.getBestWaves() === 9, 'best=' + g.getBestWaves());
 }
 
 /* ============ E. 累计统计 ============ */
@@ -431,25 +377,22 @@ console.log('--- F. 存档健壮性与清除 ---');
 {
   const bad = createSandbox({ starshield_stats: '{oops' });
   assert('损坏的统计存档回退为空进度',
-    bad.game.getStatsTotals().intercepted === 0 && bad.game.getBoard('campaign').length === 0);
+    bad.game.getStatsTotals().intercepted === 0);
   assert('损坏存档产生可读提示（含"损坏"）',
     String(bad.game.takeWarning() || '').indexOf('损坏') >= 0, String(bad.game.takeWarning()));
   const partial = createSandbox({ starshield_stats: JSON.stringify({ v: 1 }) });
   const pt = partial.game.getStatsTotals();
   assert('缺字段的统计存档回退默认且不抛错',
-    pt.plays.campaign === 0 && pt.timeSec === 0 && partial.game.getBoard('endless').length === 0);
+    pt.plays.campaign === 0 && pt.timeSec === 0);
   const junk = createSandbox({
     starshield_stats: JSON.stringify({
       totals: { plays: { campaign: 'x' }, wins: null, timeSec: -5, intercepted: NaN },
-      boards: { campaign: [{ score: 'a', wave: -2, levelName: 7 }, null, 'nope'] },
     }),
   });
   const jt = junk.game.getStatsTotals();
-  const jb = junk.game.getBoard('campaign');
-  assert('脏数据被归一化（负数/NaN/字符串/非对象条目全部收敛）',
-    jt.plays.campaign === 0 && jt.timeSec === 0 && jt.intercepted === 0
-    && jb.length === 1 && jb[0].score === 0 && jb[0].wave === 0 && typeof jb[0].levelName === 'string',
-    JSON.stringify({ t: jt, b: jb }));
+  assert('脏数据被归一化（负数/NaN/字符串全部收敛）',
+    jt.plays.campaign === 0 && jt.timeSec === 0 && jt.intercepted === 0,
+    JSON.stringify(jt));
 }
 {
   // 清除进度：删除 stats 键 + 复位内存；starshield_setup 仍不受管理
@@ -464,15 +407,15 @@ console.log('--- F. 存档健壮性与清除 ---');
   g.stepFrame(DT);
   assert('清除前统计键存在', !!s.ls.getItem('starshield_stats'));
   g.clearAllProgress();
-  assert('清除进度删除统计与榜单键', s.ls.getItem('starshield_stats') === null);
+  assert('清除进度删除统计键', s.ls.getItem('starshield_stats') === null);
   const t = g.getStatsTotals();
   assert('清除进度复位统计内存态',
-    t.intercepted === 0 && t.plays.campaign === 0 && g.getBoard('campaign').length === 0,
+    t.intercepted === 0 && t.plays.campaign === 0,
     JSON.stringify(t));
   assert('布防存档键仍不属于游戏管理范围', s.ls.getItem('starshield_setup') !== null);
 }
 {
-  // 单机自查：榜单/统计实现中不得出现任何网络 API
+  // 单机自查：统计实现中不得出现任何网络 API
   const src = fs.readFileSync(path.join(root, 'js/game.js'), 'utf8');
   assert('无任何网络请求 API（fetch/XHR/WebSocket/ServiceWorker）',
     !/\bfetch\s*\(/.test(src) && !/XMLHttpRequest/.test(src)
@@ -498,16 +441,12 @@ console.log('--- G. 展示层 ---');
   assert('结算面板渲染结局文案（含标题与正文）',
     endBox.style.display === '' && endBox.innerHTML.indexOf('结局') >= 0
     && endBox.innerHTML.indexOf('re-text') >= 0, endBox.innerHTML.slice(0, 60));
-  const boardBox = s.el('resultBoard');
-  assert('结算面板渲染上榜名次',
-    boardBox.style.display === '' && boardBox.textContent.indexOf('榜第 1 名') >= 0,
-    boardBox.textContent);
   // 菜单星图总览
   s.window.__refreshMenuBest();
   const collect = s.el('collectList');
   const html = collect.innerHTML;
-  assert('星图总览面板含三块内容（收集进度 / 统计摘要 / 历史榜单）',
-    html.indexOf('收集进度') >= 0 && html.indexOf('统计摘要') >= 0 && html.indexOf('榜') >= 0);
+  assert('星图总览面板含两块内容（收集进度 / 统计摘要）且不再出现榜单',
+    html.indexOf('收集进度') >= 0 && html.indexOf('统计摘要') >= 0 && html.indexOf('榜') < 0);
   assert('星图总览展示闯关星数与隐藏关进度',
     html.indexOf('闯关星数') >= 0 && html.indexOf('隐藏关') >= 0);
   assert('星图总览展示累计统计口径（时长 / 拦截 / 场次）',
@@ -515,6 +454,6 @@ console.log('--- G. 展示层 ---');
   assert('非 100% 收集时不显示「完美星图」收束文案', html.indexOf('perfect') < 0 && html.indexOf('完美星图') < 0);
 }
 
-console.log(ok ? '\n=== v1.11 无尽阶段 / 榜单 / 统计测试全部通过 ==='
-               : '\n=== v1.11 榜单/统计测试存在失败 ===');
+console.log(ok ? '\n=== v1.11 无尽阶段 / 统计测试全部通过 ==='
+               : '\n=== v1.11 统计测试存在失败 ===');
 process.exit(ok ? 0 : 1);

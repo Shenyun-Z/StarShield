@@ -49,7 +49,10 @@
   // 设置存档（P0-4）：单一 JSON 键。音效开关仍由 audio.js 自管 starshield_audio，
   // 不迁入此处，避免双写与音效状态被设置存档覆盖。
   const SETTINGS_KEY = 'starshield_settings';
-  const DEFAULT_SETTINGS = { showHint: true, showWarnings: true };
+  // v1.13：新增 reduceMotion（减少动效）与 volume（主音量 0~1）。加进白名单后，
+  // loadSettings / setSetting / clearAllProgress 的既有通道会自动覆盖它们
+  // （键白名单 + 同型校验 + 复位），无需新增存档键。
+  const DEFAULT_SETTINGS = { showHint: true, showWarnings: true, reduceMotion: false, volume: 0.8 };
   // ===== 星级评价（P1-A，对标塔防 3 星制）=====
   // 仅闯关模式计星：★1 通关 / ★2 通关且受击 ≤ 自适应阈值 / ★3 零受击。
   // 阈值必须"保证可达"，故按本关波数自适应并设下限（不同关卡波数 8~22 差异很大，
@@ -71,7 +74,7 @@
   const DAILY_KEY = 'starshield_daily';
   const TASKS_KEY = 'starshield_tasks';
   const RECORDS_KEY = 'starshield_records';
-  // ===== v1.11 新增存档键（历史榜单 + 累计统计，共用一个键）=====
+  // ===== v1.11 新增存档键（累计统计）=====
   const STATS_KEY = 'starshield_stats';
   // 第四章（新增内容）的解锁门槛：通关第 30 关之后，还需累计星星达到门槛。
   // 只作用于 idx >= 30 的新关卡——前 30 关的解锁语义与可达性逐位不变（不做进度倒退）。
@@ -159,8 +162,13 @@
     levelIndex: 0,
     timeScale: 1,
     gameOver: false,
+    // v1.13 暂停：独立布尔字段，**刻意不复用 timeScale**（loop-mechanics 与 result-actions
+    // 直读 timeScale 判定"开局即常速"，复用会污染该语义）。暂停只在 stepFrame 顶部早退。
+    paused: false,
     showHint: true,
     showWarnings: true,      // 撞母星预警开关（P0-3，独立于提示线）
+    reduceMotion: false,     // 减少动效开关（v1.13，与设置存档同步；UI 层映射到 html[data-motion]）
+    volume: 0.8,             // 主音量（v1.13，0~1；由 audio.setVolume 应用）
     slowQuota: SLOW_QUOTA_MAX,  // 减速剩余额度（秒，P0-1）
     gameTime: 0,             // 本局游戏时钟累计（秒，P0-2 撤销窗口口径）
     placeHistory: [],        // 撤销历史：[{ body, cost, typeKey, time }]（P0-2）
@@ -187,7 +195,6 @@
     lastRecord: null,        // 最近一局的纪录对比（结算面板用）
     lastDaily: null,         // 最近一局的每日挑战成绩（结算面板用）
     lastEnding: null,        // 最近一局的结局文案（v1.11，结算面板用；仅闯关终关/隐藏关）
-    lastBoardRank: null,     // 最近一局的历史榜单名次（v1.11，结算面板用）
     comets: 0,
     asteroids: 0,
     starsPlaced: 0,
@@ -230,7 +237,7 @@
     SETTINGS_KEY, STARS_KEY, ACHIEVEMENTS_KEY,
     // v1.10：挑战进度 / 每日挑战 / 额外任务 / 每关最佳记录
     CHALLENGE_KEY, DAILY_KEY, TASKS_KEY, RECORDS_KEY,
-    // v1.11：历史榜单与累计统计
+    // v1.11：累计统计
     STATS_KEY,
   ];
   // 存档异常反馈（M7）：localStorage 损坏/配额超限不再静默吞掉，
@@ -281,9 +288,16 @@
     if (parsed && typeof parsed === 'object') {
       if (typeof parsed.showHint === 'boolean') settings.showHint = parsed.showHint;
       if (typeof parsed.showWarnings === 'boolean') settings.showWarnings = parsed.showWarnings;
+      // v1.13：旧存档没有这些字段 → 保留默认值（缺字段不算损坏，与既有容错口径一致）
+      if (typeof parsed.reduceMotion === 'boolean') settings.reduceMotion = parsed.reduceMotion;
+      if (typeof parsed.volume === 'number' && Number.isFinite(parsed.volume)) {
+        settings.volume = clamp(parsed.volume, 0, 1);      // 越界存档值钳制回合法区间
+      }
     }
     state.showHint = settings.showHint;
     state.showWarnings = settings.showWarnings;
+    state.reduceMotion = settings.reduceMotion;
+    state.volume = settings.volume;
     return getSettings();
   }
   function saveSettings() {
@@ -302,9 +316,13 @@
   function setSetting(key, value) {
     if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key)) return false;
     if (typeof DEFAULT_SETTINGS[key] !== typeof value) return false;
-    settings[key] = value;
-    if (key === 'showHint') state.showHint = value;
-    if (key === 'showWarnings') state.showWarnings = value;
+    // 音量是唯一带区间的设置项：写入前钳制，避免把越界值写进存档
+    const v = (key === 'volume') ? clamp(value, 0, 1) : value;
+    settings[key] = v;
+    if (key === 'showHint') state.showHint = v;
+    if (key === 'showWarnings') state.showWarnings = v;
+    if (key === 'reduceMotion') state.reduceMotion = v;   // v1.13：动效偏好同步到 state 供 UI 读取
+    if (key === 'volume') state.volume = v;               // v1.13：主音量同步到 state 供 UI 读取
     saveSettings();
     return true;
   }
@@ -455,36 +473,38 @@
 
   // ===== 成就（P1-C）=====
   // 声明式定义：need(stats) 只读 getCurrentRunStats() 的字段，判定与 UI 完全解耦、可独立测试。
+  // v1.13：为每项补 group 字段（枚举 id），供 UI 按 5 组分区展示；分组顺序由 ACHIEVEMENT_GROUPS 给定。
+  // 该字段为**只增不改**：判定（need）与存档读写完全不读取它，故不影响任何既有逻辑与测试。
   const ACHIEVEMENTS = [
-    { id: 'first_win',    name: '初次告捷', desc: '首次通关任意闯关关卡',
+    { id: 'first_win',    group: 'combat',  name: '初次告捷', desc: '首次通关任意闯关关卡',
       need: (s) => s.mode === 'campaign' && s.endReason === 'win' },
-    { id: 'no_hit_win',   name: '铜墙铁壁', desc: '零受击通关（三星）',
+    { id: 'no_hit_win',   group: 'combat',  name: '铜墙铁壁', desc: '零受击通关（三星）',
       need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.hits === 0 },
-    { id: 'hit_survive',  name: '浴火重生', desc: '母星受击 5 次以上仍通关',
+    { id: 'hit_survive',  group: 'combat',  name: '浴火重生', desc: '母星受击 5 次以上仍通关',
       need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.hits >= 5 },
-    { id: 'wave_15',      name: '波次机器', desc: '单局击退 15 波以上并通关',
+    { id: 'wave_15',      group: 'combat',  name: '波次机器', desc: '单局击退 15 波以上并通关',
       need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.wave >= 15 },
-    { id: 'star_30',      name: '群星闪耀', desc: '累计获得 30 颗星',
+    { id: 'star_30',      group: 'combat',  name: '群星闪耀', desc: '累计获得 30 颗星',
       need: () => getTotalStars() >= 30 },
-    { id: 'star_60',      name: '星河为证', desc: '累计获得 60 颗星',
+    { id: 'star_60',      group: 'combat',  name: '星河为证', desc: '累计获得 60 颗星',
       need: () => getTotalStars() >= 60 },
     // 文案修正（v1.11）：判定一直用 totalStarsMax()（现为 40 常规关 × 3 = 120），
     // 旧文案写的 90 是加入第四章前的数字，属"文案与实战不符"，此处改为动态口径。
-    { id: 'star_all',     name: '完美星域', desc: '集齐全部 ' + (regularLevelCount() * STAR_MAX_PER_LEVEL) + ' 颗星',
+    { id: 'star_all',     group: 'combat',  name: '完美星域', desc: '集齐全部 ' + (regularLevelCount() * STAR_MAX_PER_LEVEL) + ' 颗星',
       need: () => getTotalStars() >= totalStarsMax() },
-    { id: 'clear_50',     name: '拦截专家', desc: '单局拦截 50 个来袭威胁',
+    { id: 'clear_50',     group: 'economy', name: '拦截专家', desc: '单局拦截 50 个来袭威胁',
       need: (s) => s.cleared >= 50 },
-    { id: 'bh_10',        name: '黑洞胃王', desc: '单局用黑洞吞噬 10 个威胁',
+    { id: 'bh_10',        group: 'economy', name: '黑洞胃王', desc: '单局用黑洞吞噬 10 个威胁',
       need: (s) => s.blackholeSwallowed >= 10 },
-    { id: 'no_slow_win',  name: '从容不迫', desc: '不使用慢动作通关',
+    { id: 'no_slow_win',  group: 'economy', name: '从容不迫', desc: '不使用慢动作通关',
       need: (s) => s.endReason === 'win' && s.slowUsedSeconds <= 0 },
-    { id: 'thrifty',      name: '一次成型', desc: '通关过程中不回收、不升级',
+    { id: 'thrifty',      group: 'economy', name: '一次成型', desc: '通关过程中不回收、不升级',
       need: (s) => s.endReason === 'win' && s.mode === 'campaign' && s.recycles === 0 && s.upgrades === 0 },
-    { id: 'tinkerer',     name: '机械师', desc: '单局完成 5 次星体升级',
+    { id: 'tinkerer',     group: 'economy', name: '机械师', desc: '单局完成 5 次星体升级',
       need: (s) => s.upgrades >= 5 },
-    { id: 'eco_win',      name: '零浪费', desc: '闯关通关且星能结余 ≥ 200',
+    { id: 'eco_win',      group: 'economy', name: '零浪费', desc: '闯关通关且星能结余 ≥ 200',
       need: (s) => s.mode === 'campaign' && s.endReason === 'win' && s.budgetLeft >= 200 },
-    { id: 'survive_500',  name: '长明者', desc: '生存模式单局得分 ≥ 500',
+    { id: 'survive_500',  group: 'economy', name: '长明者', desc: '生存模式单局得分 ≥ 500',
       need: (s) => s.mode === 'survival' && s.score >= 500 },
     // ===== v1.11 扩展（+12 项）：覆盖专精 / 协同 / 每日挑战 / 隐藏关 / 任务全清 / 无尽风暴 / 挑战进度 / 完美收集 =====
     // 口径说明：
@@ -492,33 +512,41 @@
     //   · 无尽成就用 s.wave 而非 bestWaves —— updateBest() 在 evaluateAchievements() **之后**执行，
     //     结算时 bestWaves 还是上一局的值，用它会漏判；
     //   · 协同是小数比率（physics.SYNERGY_TOTAL_MAX = 0.40），故阈值写作 0.30 / 0.40。
-    { id: 'spec_giant_5',  name: '巨石匠',   desc: '单局放置 5 颗「巨型」专精星体',
+    { id: 'spec_giant_5',  group: 'spec',    name: '巨石匠',   desc: '单局放置 5 颗「巨型」专精星体',
       need: (s) => s.specGiantPlaced >= 5 },
-    { id: 'spec_switch_3', name: '变形者',   desc: '单局完成 3 次专精互转',
+    { id: 'spec_switch_3', group: 'spec',    name: '变形者',   desc: '单局完成 3 次专精互转',
       need: (s) => s.specSwitches >= 3 },
-    { id: 'synergy_30',    name: '引力共振', desc: '单局某颗星体的协同加成达 30%',
+    { id: 'synergy_30',    group: 'spec',    name: '引力共振', desc: '单局某颗星体的协同加成达 30%',
       need: (s) => s.synergyMaxBonus >= 0.30 },
-    { id: 'synergy_40',    name: '满格共振', desc: '单局协同加成打满 40% 上限',
+    { id: 'synergy_40',    group: 'spec',    name: '满格共振', desc: '单局协同加成打满 40% 上限',
       need: (s) => s.synergyMaxBonus >= 0.40 },
-    { id: 'daily_first',   name: '今日之星', desc: '首次通关每日挑战',
+    { id: 'daily_first',   group: 'daily',   name: '今日之星', desc: '首次通关每日挑战',
       need: (s) => s.mode === 'daily' && s.endReason === 'win' },
-    { id: 'daily_streak_3', name: '三日不辍', desc: '每日挑战连续通关 3 天',
+    { id: 'daily_streak_3', group: 'daily',  name: '三日不辍', desc: '每日挑战连续通关 3 天',
       need: () => getDailyStreak() >= 3 },
-    { id: 'hidden_clear',  name: '密道探索者', desc: '通关任意隐藏关',
+    { id: 'hidden_clear',  group: 'daily',   name: '密道探索者', desc: '通关任意隐藏关',
       need: (s) => !!s.hidden && s.endReason === 'win' },
-    { id: 'hidden_all',    name: '星图尽头', desc: '通关全部隐藏关',
+    { id: 'hidden_all',    group: 'daily',   name: '星图尽头', desc: '通关全部隐藏关',
       need: () => countHiddenLevels() > 0 && getHiddenClearedCount() >= countHiddenLevels() },
-    { id: 'task_all',      name: '使命必达', desc: '完成全部 ' + regularLevelCount() + ' 个常规关的额外任务',
+    { id: 'task_all',      group: 'meta',    name: '使命必达', desc: '完成全部 ' + regularLevelCount() + ' 个常规关的额外任务',
       need: () => regularLevelCount() > 0 && countRegularTasksDone() >= regularLevelCount() },
-    { id: 'endless_30',    name: '风暴幸存者', desc: '无尽模式坚守 30 波（历经三次风暴）',
+    { id: 'endless_30',    group: 'meta',    name: '风暴幸存者', desc: '无尽模式坚守 30 波（历经三次风暴）',
       need: (s) => s.mode === 'endless' && s.wave >= 30 },
-    { id: 'challenge_10',  name: '挑战者',   desc: '挑战模式通关 10 关',
+    { id: 'challenge_10',  group: 'meta',    name: '挑战者',   desc: '挑战模式通关 10 关',
       need: () => getChallengeUnlocked() >= 10 },
-    { id: 'perfect',       name: '完美星图', desc: '集齐 ' + (regularLevelCount() * STAR_MAX_PER_LEVEL)
+    { id: 'perfect',       group: 'meta',    name: '完美星图', desc: '集齐 ' + (regularLevelCount() * STAR_MAX_PER_LEVEL)
         + ' 星、清空全部额外任务与隐藏关',
       need: () => getTotalStars() >= totalStarsMax()
         && regularLevelCount() > 0 && countRegularTasksDone() >= regularLevelCount()
         && countHiddenLevels() > 0 && getHiddenClearedCount() >= countHiddenLevels() },
+  ];
+  // 成就分组表（v1.13）：数组顺序即 UI 展示顺序；icon 为内联 SVG sprite 的 symbol id。
+  const ACHIEVEMENT_GROUPS = [
+    { id: 'combat',  label: '通关与星级', icon: 'ic-star' },
+    { id: 'economy', label: '操作与经营', icon: 'ic-budget' },
+    { id: 'spec',    label: '专精与协同', icon: 'ic-orbit' },
+    { id: 'daily',   label: '每日与隐藏关', icon: 'ic-clock' },
+    { id: 'meta',    label: '模式与收集', icon: 'ic-trophy' },
   ];
   let achievements = Object.create(null);
   let pendingAchievements = [];
@@ -548,7 +576,7 @@
   }
   function getAchievementList() {
     return ACHIEVEMENTS.map(a => ({
-      id: a.id, name: a.name, desc: a.desc,
+      id: a.id, group: a.group, name: a.name, desc: a.desc,
       unlocked: !!achievements[a.id],
       time: achievements[a.id] || 0,
     }));
@@ -735,59 +763,45 @@
     return { record: Object.assign({}, next), newBest: newBest };
   }
 
-  // ===== 历史榜单与累计统计（v1.11）=====
+  // ===== 累计统计（v1.11；v1.13 移除本机榜单，仅保留累计统计）=====
   // 单一存档键 STATS_KEY，结构：
   //   { v: 1,
-  //     totals: { plays:{mode:n}, wins:{mode:n}, timeSec, intercepted, hits, bestScore, bestWaves },
-  //     boards: { survival:[], campaign:[], challenge:[], endless:[], daily:[] } }   // 各模式前 5 名
-  // 设计取舍：榜单与累计统计都是"只增"的展示型数据，合用一个键可减少键数量与清进度时的复位面。
-  // 排序指标（与 README 保持一致）：无尽 → 波数优先、同波数比分数；其余模式 → 分数优先、同分比波数。
+  //     totals: { plays:{mode:n}, wins:{mode:n}, timeSec, intercepted, hits, bestScore, bestWaves } }
+  // 设计取舍：累计统计是"只增"的展示型数据。旧存档中的 boards 字段会被自然忽略（向后兼容）。
   // 写入时机：仅结算期（endGame），主循环零开销。
-  const BOARD_SIZE = 5;
-  const BOARD_MODES = ['survival', 'campaign', 'challenge', 'endless', 'daily'];
-  const BOARD_MODE_NAMES = { survival: '生存', campaign: '闯关', challenge: '挑战', endless: '无尽', daily: '每日' };
+  const STATS_MODES = ['survival', 'campaign', 'challenge', 'endless', 'daily'];
+  const MODE_NAMES = { survival: '生存', campaign: '闯关', challenge: '挑战', endless: '无尽', daily: '每日' };
   function emptyStats() {
     const plays = Object.create(null), wins = Object.create(null);
-    for (let i = 0; i < BOARD_MODES.length; i++) {
-      plays[BOARD_MODES[i]] = 0;
-      wins[BOARD_MODES[i]] = 0;
+    for (let i = 0; i < STATS_MODES.length; i++) {
+      plays[STATS_MODES[i]] = 0;
+      wins[STATS_MODES[i]] = 0;
     }
-    const boards = Object.create(null);
-    for (let i = 0; i < BOARD_MODES.length; i++) boards[BOARD_MODES[i]] = [];
     return {
       v: 1,
       totals: {
         plays: plays, wins: wins, timeSec: 0, intercepted: 0, hits: 0,
         bestScore: 0, bestWaves: 0,
       },
-      boards: boards,
     };
   }
   let stats = emptyStats();
   function statsInt(v) { return Math.max(0, Math.round(Number(v) || 0)); }
-  // 本机日期键（'YYYY-MM-DD'，仅用于榜单展示）。纯展示用途，不参与任何判定。
-  function todayKey() {
-    try {
-      const d = new Date();
-      const m = d.getMonth() + 1, day = d.getDate();
-      return String(d.getFullYear()) + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
-    } catch (e) { return ''; }
-  }
   function loadStats() {
     let raw = null;
-    try { raw = localStorage.getItem(STATS_KEY); } catch (e) { setWarning('统计与榜单读取失败：本地存储不可用'); }
+    try { raw = localStorage.getItem(STATS_KEY); } catch (e) { setWarning('统计读取失败：本地存储不可用'); }
     stats = emptyStats();
     if (raw) {
       let obj = null;
       try { obj = JSON.parse(raw); } catch (e) { obj = null; }
       if (!obj || typeof obj !== 'object') {
-        setWarning('统计与榜单存档已损坏，已回退为空进度');
+        setWarning('统计存档已损坏，已回退为空进度');
       } else {
         const t = (obj.totals && typeof obj.totals === 'object') ? obj.totals : {};
         const tp = (t.plays && typeof t.plays === 'object') ? t.plays : {};
         const tw = (t.wins && typeof t.wins === 'object') ? t.wins : {};
-        for (let i = 0; i < BOARD_MODES.length; i++) {
-          const m = BOARD_MODES[i];
+        for (let i = 0; i < STATS_MODES.length; i++) {
+          const m = STATS_MODES[i];
           stats.totals.plays[m] = statsInt(tp[m]);
           stats.totals.wins[m] = statsInt(tw[m]);
         }
@@ -796,52 +810,19 @@
         stats.totals.hits = statsInt(t.hits);
         stats.totals.bestScore = statsInt(t.bestScore);
         stats.totals.bestWaves = statsInt(t.bestWaves);
-        const bs = (obj.boards && typeof obj.boards === 'object') ? obj.boards : {};
-        for (let i = 0; i < BOARD_MODES.length; i++) {
-          const m = BOARD_MODES[i];
-          const arr = Array.isArray(bs[m]) ? bs[m] : [];
-          const clean = [];
-          for (let j = 0; j < arr.length; j++) {
-            const e = arr[j];
-            if (!e || typeof e !== 'object') continue;
-            clean.push({
-              mode: m,
-              score: statsInt(e.score),
-              wave: statsInt(e.wave),
-              level: statsInt(e.level),
-              levelName: String(e.levelName == null ? '' : e.levelName),
-              stars: statsInt(e.stars),
-              duration: statsInt(e.duration),
-              date: String(e.date == null ? '' : e.date),
-              hidden: !!e.hidden,
-              won: !!e.won,
-            });
-          }
-          clean.sort(function (a, b) { return compareBoardEntries(m, a, b); });
-          stats.boards[m] = clean.slice(0, BOARD_SIZE);
-        }
       }
     }
     return getStatsTotals();
   }
   function saveStats() {
     try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); return true; }
-    catch (e) { setWarning('统计与榜单保存失败：本地存储不可用或已满'); return false; }
-  }
-  // 榜单排序（返回负数表示 a 排在 b 前面）
-  function compareBoardEntries(mode, a, b) {
-    if (mode === 'endless') {
-      if ((b.wave || 0) !== (a.wave || 0)) return (b.wave || 0) - (a.wave || 0);
-      return (b.score || 0) - (a.score || 0);
-    }
-    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
-    return (b.wave || 0) - (a.wave || 0);
+    catch (e) { setWarning('统计保存失败：本地存储不可用或已满'); return false; }
   }
   function getStatsTotals() {
     const t = stats.totals;
     const plays = {}, wins = {};
-    for (let i = 0; i < BOARD_MODES.length; i++) {
-      const m = BOARD_MODES[i];
+    for (let i = 0; i < STATS_MODES.length; i++) {
+      const m = STATS_MODES[i];
       plays[m] = t.plays[m] || 0;
       wins[m] = t.wins[m] || 0;
     }
@@ -851,55 +832,11 @@
       bestScore: t.bestScore || 0, bestWaves: t.bestWaves || 0,
     };
   }
-  function getBoards() {
-    const out = {};
-    for (let i = 0; i < BOARD_MODES.length; i++) {
-      const m = BOARD_MODES[i];
-      out[m] = stats.boards[m].map(function (e) { return Object.assign({}, e); });
-    }
-    return out;
-  }
-  function getBoard(mode) {
-    const list = stats.boards[mode];
-    return Array.isArray(list) ? list.map(function (e) { return Object.assign({}, e); }) : [];
-  }
-  // 本局是否"够格上榜"：分数 > 0，或无尽模式至少推进过 1 波（避免首局 0 分占据榜首）
-  function boardEntryQualifies(mode, e) {
-    if (e.score > 0) return true;
-    return mode === 'endless' && e.wave > 0;
-  }
-  // 写入榜单，返回 { mode, rank, size, qualifies }；rank 为 null 表示未进前 5
-  function recordRunBoard() {
-    const mode = state.mode;
-    if (BOARD_MODES.indexOf(mode) < 0) return null;
-    const entry = {
-      mode: mode,
-      score: integerScore(),
-      wave: statsInt(state.wave),
-      level: statsInt(state.levelIndex),
-      levelName: state.level ? String(state.level.name || '') : '',
-      stars: statsInt(state.lastStars),
-      duration: statsInt(state.gameTime),
-      date: todayKey(),
-      hidden: isHiddenLevel(),
-      won: state.endReason === 'win',
-    };
-    if (!boardEntryQualifies(mode, entry)) {
-      return { mode: mode, rank: null, size: BOARD_SIZE, qualifies: false, entry: Object.assign({}, entry) };
-    }
-    const list = stats.boards[mode];
-    list.push(entry);
-    list.sort(function (a, b) { return compareBoardEntries(mode, a, b); });
-    let rank = list.indexOf(entry) + 1;
-    if (rank < 1 || rank > BOARD_SIZE) rank = null;
-    stats.boards[mode] = list.slice(0, BOARD_SIZE);
-    return { mode: mode, rank: rank, size: BOARD_SIZE, qualifies: true, entry: Object.assign({}, entry) };
-  }
   // 累计统计累加（每局一次）。调用点：endGame() 末尾 —— 该函数顶部有 gameOver 幂等护栏，
   // 因此这里无需再判重；整段 try/catch 包裹，失败只提示、绝不影响结算面板。
   function accumulateStats() {
     const mode = state.mode;
-    if (BOARD_MODES.indexOf(mode) < 0) return null;
+    if (STATS_MODES.indexOf(mode) < 0) return null;
     try {
       stats.totals.plays[mode] = (stats.totals.plays[mode] || 0) + 1;
       if (state.endReason === 'win') stats.totals.wins[mode] = (stats.totals.wins[mode] || 0) + 1;
@@ -916,7 +853,7 @@
       return null;
     }
   }
-  function getBoardModeNames() { return Object.assign({}, BOARD_MODE_NAMES); }
+  function getModeNames() { return Object.assign({}, MODE_NAMES); }
 
   // ===== 挑战模式进度存档（v1.10）=====
   // { unlocked, stars: {"<idx>":1|2|3}, best: {"<idx>":{bestScore,leastHits,fastestWin,won,plays}} }
@@ -1374,6 +1311,9 @@
     settings = Object.assign({}, DEFAULT_SETTINGS);
     state.showHint = settings.showHint;
     state.showWarnings = settings.showWarnings;
+    state.reduceMotion = settings.reduceMotion;   // v1.13：动效偏好随设置一并复位
+    state.volume = settings.volume;               // v1.13：主音量同样复位为默认
+    state.paused = false;                         // v1.13：清进度后不得停在暂停态
     pendingNotice = '';
     // 星级 / 成就同样复位（P1）：存档已删除，内存若不复位会出现"界面与存档不一致"
     stars = Object.create(null);
@@ -1386,12 +1326,11 @@
     daily = emptyDaily();
     tasksDone = Object.create(null);
     recordsByKey = Object.create(null);
-    stats = emptyStats();        // v1.11：统计与榜单（存档已删除，内存必须同步复位）
+    stats = emptyStats();        // v1.11：累计统计（存档已删除，内存必须同步复位）
     state.lastTask = null;
     state.lastRecord = null;
     state.lastDaily = null;
     state.lastEnding = null;
-    state.lastBoardRank = null;
     state.modifiers = [];
     // 重新加载菜单时由调用方负责刷新显示
   }
@@ -1557,7 +1496,6 @@
     state.lastRecord = null;
     state.lastDaily = null;
     state.lastEnding = null;     // v1.11：结局文案逐局重置（否则上一局的结局会残留到新一局结算）
-    state.lastBoardRank = null;  // v1.11：榜单名次逐局重置
 
     // 减速额度 / 撤销历史 / 预警列表（P0-1 / P0-2 / P0-3）：每局从零开始。
     // v1.12 行为变更：时间流速**每局复位为常速**。旧实现把 timeScale 当会话级偏好、开局不重置，
@@ -2352,6 +2290,7 @@
   function endGame(reason) {
     if (state.gameOver) return;
     state.gameOver = true;
+    state.paused = false;                    // v1.13：结算面板必须可交互，结束时强制解除暂停
     state.endReason = reason || 'defeat';    // 'defeat' | 'timeup' | 'win'
     // 通关当前关：解锁下一关（闯关/挑战各自独立推进）
     if (state.endReason === 'win') {
@@ -2370,10 +2309,8 @@
     // 结算时清空选中态（操作面板由 input 层同步隐藏）
     state.selectedBody = null;
     updateBest();
-    // v1.11 结算链路（顺序即依赖）：结局文案 → 历史榜单 → 累计统计 → 弹结算面板。
-    // 榜单要读 state.lastStars（recordRunStars 已写入）与 integerScore；统计为纯累加。
+    // v1.11 结算链路（顺序即依赖）：结局文案 → 累计统计 → 弹结算面板。
     state.lastEnding = getRunEnding();
-    state.lastBoardRank = recordRunBoard();
     accumulateStats();
     // 音效：通关/时间到 → 庆祝；母星陨落/防线失守 → gameover
     audio.play(state.endReason === 'win' ? 'place' : (state.endReason === 'timeup' ? 'place' : 'gameover'));
@@ -2404,11 +2341,30 @@
     }
   }
 
+  // ===== 暂停（v1.13）=====
+  // 只在「对局进行中」可暂停：菜单态与结算态一律拒绝（避免暂停覆盖层与菜单/结算面板互抢层级）。
+  // 关键取舍：**不改写 state.timeScale**，而是在 stepFrame 顶部早退——这样物理、gameTime、
+  // 黑洞寿命、减速额度、波次计时与生存存活分全部冻结，且 timeScale 的既有语义（开局常速）不受影响。
+  // 主循环仍须每帧照常 render 并 requestAnimationFrame（robustness 的 H1 要求每帧恰好一次调度）。
+  function setPaused(on) {
+    const next = !!on;
+    if (next === !!state.paused) return !!state.paused;                       // 幂等
+    if (next && (!state.gameStarted || state.gameOver)) return !!state.paused; // 未开局/已结束不可暂停
+    state.paused = next;
+    return !!state.paused;
+  }
+  function togglePause() { return setPaused(!state.paused); }
+  function isPaused() { return !!state.paused; }
+
   // ===== 主循环步进 =====
   // dtReal：本帧真实经过的秒数（由 input.js 的 rAF 循环传入）。
   // 内部按固定步长 DT 累加推进，返回时 state 已前进 0~MAX_SUBSTEPS 步。
   function stepFrame(dtReal) {
     if (state.gameOver || !state.gameStarted) { stepAccumulator = 0; return; }
+    // v1.13 暂停早退：必须放在**减速额度扣减（下面的 real 分支）之前**，
+    // 否则暂停期间 slowQuota / slowUsedSeconds / stasisTime 仍会按真实时间递减。
+    // stepAccumulator 归零，恢复时不会把暂停时长一次性补步（无跳帧）。
+    if (state.paused) { stepAccumulator = 0; return; }
 
     // 帧率无关的固定步长推进：按真实时间累加，攒够一个 DT 才走一步。
     // 这样 60Hz / 120Hz / 掉帧下的游戏速度一致，且物理步长恒为 DT
@@ -2715,7 +2671,12 @@
         timeGroup.style.display = '';
         const sec = Math.ceil(state.remainingTime);
         set('timeVal', sec + 's');
-        timeVal.style.color = sec <= 10 ? '#ff7a7a' : '';
+        // v1.13：告急色改用类驱动（不再写内联色值，视觉统一由 CSS token 决定）
+        const timeLow = sec <= 10;
+        if (hudCache.__timeLow !== timeLow) {
+          hudCache.__timeLow = timeLow;
+          if (timeLow) timeVal.classList.add('low'); else timeVal.classList.remove('low');
+        }
       } else {
         timeGroup.style.display = 'none';
       }
@@ -2748,26 +2709,27 @@
       }
     }
     // 模式标签：新增挑战/每日/无尽分支（此前只有闯关/其它两支，新模式会显示成"生存·…"）
+    // v1.13：标签内含图标，故写独立文本节点 modeTagText（写 #modeTag 的 textContent 会擦掉图标）
     const MODE_TAG = { campaign: '闯关', challenge: '挑战', daily: '每日', endless: '无尽', survival: '生存' };
-    set('modeTag', (MODE_TAG[state.mode] || '生存') + '·' + state.level.name);
+    set('modeTagText', (MODE_TAG[state.mode] || '生存') + '·' + state.level.name);
+    // 血量：宽度与颜色都做脏检查。v1.13 起颜色状态一律走 CSS 类（设计 token 为唯一真源，
+    // 不再写内联渐变/色值），低血量与受击闪烁共用 .low。
     const healthFill = document.getElementById('healthFill');
-    if (healthFill) {
-      const pct = clamp(state.health / (state.level.health || 1), 0, 1) * 100;
-      const pctStr = pct.toFixed(1) + '%';
-      if (hudCache.__healthPct !== pctStr) {          // 血条同样做脏检查
-        hudCache.__healthPct = pctStr;
-        healthFill.style.width = pctStr;
-        healthFill.style.background = pct < 30
-          ? 'linear-gradient(90deg,#ff6b6b,#ffa36b)'
-          : 'linear-gradient(90deg,#43e0a0,#6fdcff)';
-      }
+    const healthVal = document.getElementById('healthVal');
+    const hpPct = clamp(state.health / (state.level.health || 1), 0, 1) * 100;
+    const pctStr = hpPct.toFixed(1) + '%';
+    if (hudCache.__healthPct !== pctStr) {
+      hudCache.__healthPct = pctStr;
+      if (healthFill) healthFill.style.width = pctStr;
+    }
+    const hpLow = hpPct < 30;
+    const hpAlarm = hpLow || state.healthFlash > 0;
+    if (hudCache.__healthAlarm !== hpAlarm) {
+      hudCache.__healthAlarm = hpAlarm;
+      if (healthFill) { if (hpLow) healthFill.classList.add('low'); else healthFill.classList.remove('low'); }
+      if (healthVal) { if (hpAlarm) healthVal.classList.add('low'); else healthVal.classList.remove('low'); }
     }
     set('healthVal', String(state.health));
-    const healthVal = document.getElementById('healthVal');
-    if (healthVal) {
-      // 仅在闪烁时临时改色；结束后清空 inline style，回退到 CSS 默认色
-      healthVal.style.color = state.healthFlash > 0 ? '#ff7a7a' : '';
-    }
     set('scoreVal', integerScore());
     set('bestVal', bestDisplay());
   }
@@ -2859,6 +2821,7 @@
     state.levelIndex = idx;
     state.level = lvl;
     state.gameStarted = true;
+    state.paused = false;       // v1.13：新一局必从"运行中"开始（否则上一局的暂停态会残留）
     // 每局都从零开始：场上只有母星，所有星体由玩家自行摆放（不存在预设布防）
     setupLevel();
 
@@ -2894,12 +2857,13 @@
       }
       // 额外任务提示（只判不罚的附加目标）
       const task = lvl.task ? lvl.task.text : '';
+      // 图标统一为内联 SVG（v1.13）：与 HUD / 按钮同一套图标体系，不再混用 emoji
       banner.innerHTML =
         `<div class="lb-name">${lvl.name}</div>` +
         (story ? `<div class="lb-story">${story}</div>` : '') +
-        `<div class="lb-goal">🎯 目标：${goal}</div>` +
-        (task ? `<div class="lb-task">✦ 额外任务：${task}</div>` : '') +
-        (fail ? `<div class="lb-fail">⚠️ 失败：${fail}</div>` : '');
+        `<div class="lb-goal"><svg class="ic ic-sm"><use href="#ic-target"/></svg>目标：${goal}</div>` +
+        (task ? `<div class="lb-task"><svg class="ic ic-sm"><use href="#ic-star"/></svg>额外任务：${task}</div>` : '') +
+        (fail ? `<div class="lb-fail"><svg class="ic ic-sm"><use href="#ic-alert"/></svg>失败：${fail}</div>` : '');
       banner.classList.add('show');
       clearTimeout(banner._t);
       banner._t = setTimeout(() => banner.classList.remove('show'), 3600);
@@ -2915,19 +2879,23 @@
   function backToMenu() {
     state.gameStarted = false;
     state.gameOver = false;
+    state.paused = false;       // v1.13：回菜单必须解除暂停（否则下次开局的暂停覆盖层会残留）
     clearHudCache();
     stepAccumulator = 0;
     // 重置 controls 按钮状态（避免重开二次确认武装残留）
+    // v1.13：按钮内含图标，文案写在独立 label 节点上（写按钮 textContent 会擦掉图标）
     const restartBtn = document.getElementById('restartBtn');
     if (restartBtn) {
       restartBtn.dataset.armed = '0';
-      restartBtn.textContent = '重新开始';
       restartBtn.classList.remove('armed');
+      const rl = document.getElementById('restartLabel');
+      if (rl) rl.textContent = '重新开始';
     }
     const menuBtn = document.getElementById('menuBtn');
     if (menuBtn) {
       menuBtn.dataset.armed = '0';
-      menuBtn.textContent = '返回菜单';
+      const ml = document.getElementById('menuLabel');
+      if (ml) ml.textContent = '返回菜单';
     }
     // 清理所有动态状态
     state.shake = 0;
@@ -2999,12 +2967,10 @@
       hiddenInfo: isHiddenLevel() ? getHiddenUnlockInfo(state.levelIndex) : null,
       specSwitches: state.specSwitches || 0,
       synergyMaxBonus: maxSynergyBonus(),
-      // v1.11 扩展字段（只增不改）：专精 / 无尽阶段 / 结局 / 榜单 / 每日连胜 / 完美收集
+      // v1.11 扩展字段（只增不改）：专精 / 无尽阶段 / 结局 / 每日连胜 / 完美收集
       specGiantPlaced: state.specGiantPlaced || 0,
       endlessStage: state.endlessStage || 0,
       ending: state.lastEnding ? state.lastEnding.id : '',
-      boardMode: state.lastBoardRank ? state.lastBoardRank.mode : '',
-      boardRank: (state.lastBoardRank && Number.isFinite(state.lastBoardRank.rank)) ? state.lastBoardRank.rank : 0,
       dailyStreak: getDailyStreak(),
       hiddenCleared: getHiddenClearedCount(),
       perfect: isPerfectCollected(),
@@ -3028,6 +2994,10 @@
     startGame,
     backToMenu,
     stepFrame,
+    // v1.13 暂停
+    setPaused,
+    togglePause,
+    isPaused,
     updateHud,
     placeStar,
     canPlaceAt,
@@ -3087,7 +3057,7 @@
     countHiddenLevels,
     getHiddenClearedCount,
     getStarDistribution,
-    // v1.11 结局文案 / 完美收集 / 无尽阶段 / 榜单与统计
+    // v1.11 结局文案 / 完美收集 / 无尽阶段 / 累计统计
     getRunEnding,
     getPerfectStory,
     isPerfectCollected,
@@ -3096,13 +3066,10 @@
     ENDLESS_STAGE_SIZE,
     // 只读：按当前 state.wave / state.mode 推导本波参数（无副作用，供节奏校验与外部展示）
     getWaveParams: waveParams,
-    BOARD_SIZE,
-    BOARD_MODES,
+    STATS_MODES,
     loadStats,
     getStatsTotals,
-    getBoards,
-    getBoard,
-    getBoardModeNames,
+    getModeNames,
     getDailyStreak,
     prevDailyKey,
     // v1.10 模式 / 修饰符 / 任务 / 记录 / 挑战 / 每日挑战
@@ -3135,6 +3102,7 @@
     evaluateAchievements,
     takeNewAchievements,
     ACHIEVEMENTS,
+    ACHIEVEMENT_GROUPS,
     STAR_TYPES,
     SURVIVAL_LEVELS,
     CAMPAIGN_LEVELS,
@@ -3160,6 +3128,6 @@
   loadTasks();
   loadRecords();
   loadDaily();
-  // v1.11：历史榜单与累计统计（只读展示数据，损坏时回退默认并给出提示）
+  // v1.11：累计统计（只读展示数据，损坏时回退默认并给出提示）
   loadStats();
 })();

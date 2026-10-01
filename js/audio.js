@@ -16,6 +16,11 @@
 
   let ctx = null;
   let enabled = true;
+  // v1.13：主音量（0~1）。所有合成音先汇入 master gain 再送 destination，
+  // 这样调音量不需要重建 AudioContext，也不影响单个音效的包络。
+  // 取值由设置面板驱动（持久化在 starshield_settings.volume，本模块只负责应用）。
+  let master = null;
+  let volume = 0.8;
 
   // 读取本地音效开关（file:// 下个别浏览器可能限制，try 兜底）
   try { enabled = localStorage.getItem('starshield_audio') !== 'off'; }
@@ -41,6 +46,33 @@
     }
   }
 
+  // 主音量节点（懒创建；创建失败时安全退回直连 destination，绝不因音量而丢音）
+  function ensureMaster() {
+    if (!ctx) return null;
+    if (!master) {
+      try {
+        master = ctx.createGain();
+        master.gain.value = volume;
+        master.connect(ctx.destination);
+      } catch (e) {
+        master = null;
+      }
+    } else {
+      try { master.gain.value = volume; } catch (e) {}
+    }
+    return master;
+  }
+  function out() { return ensureMaster() || ctx.destination; }
+
+  // 设置主音量（越界自动钳制）；返回实际生效值。ctx 未就绪时只记值，init 后自动应用。
+  function setVolume(v) {
+    const n = Number(v);
+    if (Number.isFinite(n)) volume = Math.max(0, Math.min(1, n));
+    ensureMaster();
+    return volume;
+  }
+  function getVolume() { return volume; }
+
   // 基础合成音：振荡器 + 指数包络
   function tone(opts) {
     if (!enabled || !ctx) return;
@@ -55,7 +87,7 @@
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(peak, t0 + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(out());
     o.start(t0); o.stop(t0 + dur + 0.02);
   }
 
@@ -72,7 +104,7 @@
     g.gain.setValueAtTime(gain, t0);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100;
-    src.connect(f); f.connect(g); g.connect(ctx.destination);
+    src.connect(f); f.connect(g); g.connect(out());
     src.start(t0); src.stop(t0 + dur);
   }
 
@@ -134,6 +166,7 @@
   }
 
   const audio = { init: init, unlock: unlock, play: play,
-                  setEnabled: setEnabled, isEnabled: isEnabled };
+                  setEnabled: setEnabled, isEnabled: isEnabled,
+                  setVolume: setVolume, getVolume: getVolume };
   global.audio = audio;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,52 +1,199 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-motion="full">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#05070d">
   <title>StarShield 星盾防线</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- ================= 内联 SVG 图标 sprite（v1.13） =================
+       全部图标在 HTML 内联定义：零外链、零请求、离线可用，且对 JS 与测试沙箱完全透明
+       （若做成 js/icons.js，则所有 withInput 沙箱都不会加载它，input.js 会引用到不存在的全局）。
+       统一 24×24 视窗、1.7px 线性描边、currentColor 继承文字色。 -->
+  <svg class="svg-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="ic-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.6 4.6 5.6v6.1c0 4.4 3 8.2 7.4 9.7 4.4-1.5 7.4-5.3 7.4-9.7V5.6z"/>
+        <path d="M9.2 11.9l2.1 2.2 3.6-4.2"/>
+      </symbol>
+      <symbol id="ic-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13.4 2.4 5.6 13.2h5.2l-1.2 8.4 8-11h-5.3z"/>
+      </symbol>
+      <symbol id="ic-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.4 12.4h3.4l2-5.2 3.2 10.4 2.2-6.4 1.6 3.1h6.7"/>
+      </symbol>
+      <symbol id="ic-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12.6" r="8.2"/>
+        <path d="M12 8.2v4.6l3.2 1.9"/>
+      </symbol>
+      <symbol id="ic-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20.4s-7.6-4.6-7.6-9.6a4.3 4.3 0 0 1 7.6-2.7 4.3 4.3 0 0 1 7.6 2.7c0 5-7.6 9.6-7.6 9.6z"/>
+      </symbol>
+      <symbol id="ic-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.4"/>
+        <circle cx="12" cy="12" r="3.6"/>
+        <path d="M12 1.8v2.6M12 19.6v2.6M1.8 12h2.6M19.6 12h2.6"/>
+      </symbol>
+      <symbol id="ic-trophy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 3.6h8v5.2a4 4 0 0 1-8 0z"/>
+        <path d="M8 4.6H5.2v2.2a3 3 0 0 0 3 3M16 4.6h2.8v2.2a3 3 0 0 1-3 3"/>
+        <path d="M12 12.8v4.2M8.4 20.4h7.2"/>
+      </symbol>
+      <symbol id="ic-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+        <path d="M9.2 5.4v13.2M14.8 5.4v13.2"/>
+      </symbol>
+      <symbol id="ic-play" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+        <path d="M8 4.8 19 12 8 19.2z"/>
+      </symbol>
+      <symbol id="ic-restart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 12a8 8 0 1 1-2.6-5.9"/>
+        <path d="M20.4 4.2v4.6h-4.6"/>
+      </symbol>
+      <symbol id="ic-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 10.6 12 3.8l8 6.8v9.4H4z"/>
+        <path d="M9.6 20V13h4.8v7"/>
+      </symbol>
+      <symbol id="ic-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3.2"/>
+        <path d="M12 2.6v2.8M12 18.6v2.8M2.6 12h2.8M18.6 12h2.8M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M7.4 16.6l-2 2"/>
+      </symbol>
+      <symbol id="ic-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3.6 21 20H3z"/>
+        <path d="M12 9.6v4.4M12 17.2h.01"/>
+      </symbol>
+      <symbol id="ic-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.4 12S6 5.8 12 5.8 21.6 12 21.6 12 18 18.2 12 18.2 2.4 12 2.4 12z"/>
+        <circle cx="12" cy="12" r="2.8"/>
+      </symbol>
+      <symbol id="ic-sound" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4.4 9.4h3.2L12 5.6v12.8l-4.4-3.8H4.4z"/>
+        <path d="M15.4 9.2a4 4 0 0 1 0 5.6M18 6.8a7.4 7.4 0 0 1 0 10.4"/>
+      </symbol>
+      <symbol id="ic-slider" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <path d="M3 8h18M3 16h18"/>
+        <circle cx="9" cy="8" r="2.4" fill="currentColor" stroke="none"/>
+        <circle cx="15.5" cy="16" r="2.4" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="ic-motion" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.8v3.4M12 17.8v3.4M2.8 12h3.4M17.8 12h3.4M5.6 5.6l2.4 2.4M16 16l2.4 2.4M18.4 5.6 16 8M8 16l-2.4 2.4"/>
+      </symbol>
+      <symbol id="ic-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4.4 6.8h15.2M9.4 6.8V4.4h5.2v2.4"/>
+        <path d="M6.6 6.8 7.6 20h8.8l1-13.2"/>
+        <path d="M10.4 10.4v6M13.6 10.4v6"/>
+      </symbol>
+      <symbol id="ic-orbit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3.2"/>
+        <ellipse cx="12" cy="12" rx="9.4" ry="4.6"/>
+        <circle cx="19.8" cy="9.6" r="1.5" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="ic-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3.4 14.6 9l6.1.8-4.4 4.3 1 6-5.3-2.9L6.7 20l1-6-4.4-4.3L9.4 9z"/>
+      </symbol>
+      <symbol id="ic-planet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="11.4" r="6.4"/>
+        <path d="M3.4 15.6c4.8 2.3 13.4 2.3 17.2-1"/>
+      </symbol>
+      <symbol id="ic-blackhole" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4.2"/>
+        <path d="M12 3.4a8.6 8.6 0 0 1 0 17.2 5.6 5.6 0 0 0 0-11.2 2.8 2.8 0 0 1 0 5.6"/>
+      </symbol>
+      <symbol id="ic-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2.4"/>
+        <path d="M7.6 7.6a6.2 6.2 0 0 0 0 8.8M16.4 16.4a6.2 6.2 0 0 0 0-8.8"/>
+        <path d="M4.6 4.6a10.4 10.4 0 0 0 0 14.8M19.4 19.4a10.4 10.4 0 0 0 0-14.8"/>
+      </symbol>
+      <symbol id="ic-repulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2.6"/>
+        <path d="M12 2.8v4M12 17.2v4M2.8 12h4M17.2 12h4"/>
+        <path d="M6.4 6.4 8.6 8.6M15.4 15.4l2.2 2.2M17.6 6.4 15.4 8.6M8.6 15.4l-2.2 2.2"/>
+      </symbol>
+      <symbol id="ic-stasis" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6.4 3.6h11.2L12 12l5.6 8.4H6.4L12 12z"/>
+        <path d="M7.6 8h8.8M7.6 16h8.8"/>
+      </symbol>
+      <symbol id="ic-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.8" y="10.4" width="14.4" height="9.2" rx="2"/>
+        <path d="M8.4 10.4V7.8a3.6 3.6 0 0 1 7.2 0v2.6"/>
+      </symbol>
+      <symbol id="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12.8 10 17.6 19.4 7"/>
+      </symbol>
+      <symbol id="ic-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6.4 9.6 12 15.2l5.6-5.6"/>
+      </symbol>
+      <symbol id="ic-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2.8"/>
+        <path d="M19.4 14.4a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.87 1.2v.17a2 2 0 0 1-4 0v-.09a1.7 1.7 0 0 0-2.93-1.16l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 3.6 14.4H3.4a2 2 0 0 1 0-4h.17A1.7 1.7 0 0 0 4.77 7.5l-.06-.06A2 2 0 1 1 7.54 4.6l.06.06A1.7 1.7 0 0 0 9.5 5.02h.09a2 2 0 0 1 4 0v.17a1.7 1.7 0 0 0 2.87 1.2l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0 1.2 2.87h.11a2 2 0 0 1 0 4h-.17"/>
+      </symbol>
+      <symbol id="ic-budget" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="7.4" rx="7.6" ry="3.4"/>
+        <path d="M4.4 7.4v9.2c0 1.9 3.4 3.4 7.6 3.4s7.6-1.5 7.6-3.4V7.4"/>
+        <path d="M4.4 12c0 1.9 3.4 3.4 7.6 3.4s7.6-1.5 7.6-3.4"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <div id="stage" class="stage">
     <canvas id="game"></canvas>
 
-    <!-- 顶部状态条：默认隐藏，游戏开始后显示 -->
+    <!-- ================= HUD（v1.13 重设计：状态条 + 胶囊） =================
+         注意：数值节点保持既有 id 与文本格式（#waveVal 必须是「当前/总」，
+         由 test/objective.test.js 正则锁定）。 -->
     <div id="hud" class="hud hidden">
-      <div id="modeTag" class="mode-tag">模式</div>
-      <div class="hud-group">
-        <span class="hud-label">星能</span>
-        <span id="budgetVal">0</span>
+      <div class="hud-inner">
+        <div class="hud-left">
+          <div id="modeTag" class="mode-tag"><svg class="ic ic-sm"><use href="#ic-shield"/></svg><span id="modeTagText">模式</span></div>
+          <div class="hud-group">
+            <svg class="ic ic-sm"><use href="#ic-budget"/></svg>
+            <span class="hud-label">星能</span>
+            <span id="budgetVal">0</span>
+          </div>
+          <div class="hud-group" id="waveGroup">
+            <svg class="ic ic-sm"><use href="#ic-wave"/></svg>
+            <span class="hud-label">波次</span>
+            <span id="waveVal">0</span>
+          </div>
+          <div class="hud-group" id="timeGroup" style="display:none">
+            <svg class="ic ic-sm"><use href="#ic-clock"/></svg>
+            <span class="hud-label">剩余</span>
+            <span id="timeVal">0</span>
+          </div>
+        </div>
+        <div class="hud-right">
+          <div class="hud-group health-group">
+            <svg class="ic ic-sm"><use href="#ic-heart"/></svg>
+            <span class="hud-label">母星</span>
+            <span id="healthBar" class="health-bar"><span id="healthFill"></span></span>
+            <span id="healthVal" class="health-val">20</span>
+          </div>
+          <div class="hud-group">
+            <svg class="ic ic-sm"><use href="#ic-target"/></svg>
+            <span class="hud-label">分数</span>
+            <span id="scoreVal">0</span>
+          </div>
+          <div class="hud-group best-group">
+            <svg class="ic ic-sm"><use href="#ic-trophy"/></svg>
+            <span class="hud-label">最佳</span>
+            <span id="bestVal">—</span>
+          </div>
+        </div>
       </div>
-      <div class="hud-group" id="waveGroup">
-        <span class="hud-label">波次</span>
-        <span id="waveVal">0</span>
-      </div>
-      <div class="hud-group" id="timeGroup" style="display:none">
-        <span class="hud-label">剩余</span>
-        <span id="timeVal">0</span>
-      </div>
-      <div class="hud-group health-group">
-        <span class="hud-label">母星</span>
-        <span id="healthBar" class="health-bar"><span id="healthFill"></span></span>
-        <span id="healthVal" class="health-val">20</span>
-      </div>
-      <div class="hud-group">
-        <span class="hud-label">分数</span>
-        <span id="scoreVal">0</span>
-      </div>
-      <div class="hud-group best-group">
-        <span class="hud-label">最佳</span>
-        <span id="bestVal">—</span>
-      </div>
-      <!-- 下一波来袭预告（v1.10）：构成 + 来向，Boss 波整条转红 -->
-      <div class="hud-group preview-group" id="wavePreview" style="display:none">
-        <span class="hud-label">下一波</span>
-        <span id="wavePreviewBody" class="wp-body"></span>
-      </div>
-      <!-- 无尽阶段（v1.11）：显示当前阶段与距下次风暴的波数；风暴波整条转红 -->
-      <div class="hud-group stage-group" id="endlessStage" style="display:none">
-        <span class="hud-label">无尽</span>
-        <span id="endlessStageVal" class="stage-body"></span>
+      <div class="hud-sub">
+        <!-- 下一波来袭预告（v1.10）：构成 + 来向，Boss 波整条转红。
+             该节点的 className 会被 syncWavePreview 整体重写，故只能保留既有类名。 -->
+        <div class="hud-group preview-group" id="wavePreview" style="display:none">
+          <span class="hud-label">下一波</span>
+          <span id="wavePreviewBody" class="wp-body"></span>
+        </div>
+        <!-- 无尽阶段（v1.11）：显示当前阶段与距下次风暴的波数；风暴波整条转红 -->
+        <div class="hud-group stage-group" id="endlessStage" style="display:none">
+          <svg class="ic ic-sm"><use href="#ic-wave"/></svg>
+          <span class="hud-label">无尽</span>
+          <span id="endlessStageVal" class="stage-body"></span>
+        </div>
       </div>
     </div>
 
@@ -56,39 +203,83 @@
       <span id="bbSegs" class="bb-segs"></span>
     </div>
 
+    <!-- 底部悬浮栈（v1.13）：星体操作面板 / 道具槽 / 星体栏同栈纵向排列。
+         此前三者各自绝对定位（bottom 64 / 108 / 76），窄屏下道具槽会被星体栏盖住；
+         改为同一 flex 列后自然堆叠，任一分辨率都不会互相遮挡。 -->
+    <div class="bottom-stack">
+      <!-- 星体操作面板：点选场上星体后出现（升级 / 切换专精 / 回收） -->
+      <div id="bodyPanel" class="body-panel" style="display:none">
+        <span id="bpName" class="bp-name">星体</span>
+        <button id="bpUpgrade" class="ctrl">升级</button>
+        <button id="bpSwitchSpec" class="ctrl">切换专精</button>
+        <button id="bpRecycle" class="ctrl">回收</button>
+        <button id="bpClose" class="ctrl ghost">关闭</button>
+      </div>
     <!-- 道具槽：一次性引力类道具（引力脉冲 / 斥力波 / 凝滞） -->
     <div id="propBar" class="prop-bar hidden">
-      <button id="prop-gravityWell" class="prop-opt" data-prop="gravityWell">引力脉冲<small id="propCount-gravityWell">0</small></button>
-      <button id="prop-repulseWave" class="prop-opt" data-prop="repulseWave">斥力波<small id="propCount-repulseWave">0</small></button>
-      <button id="prop-stasis" class="prop-opt" data-prop="stasis">凝滞<small id="propCount-stasis">0</small></button>
+      <span class="prop-bar-label">道具</span>
+      <button id="prop-gravityWell" class="prop-opt" data-prop="gravityWell">
+        <svg class="ic"><use href="#ic-pulse"/></svg>
+        <span class="po-name">引力脉冲</span>
+        <small id="propCount-gravityWell">0</small>
+      </button>
+      <button id="prop-repulseWave" class="prop-opt" data-prop="repulseWave">
+        <svg class="ic"><use href="#ic-repulse"/></svg>
+        <span class="po-name">斥力波</span>
+        <small id="propCount-repulseWave">0</small>
+      </button>
+      <button id="prop-stasis" class="prop-opt" data-prop="stasis">
+        <svg class="ic"><use href="#ic-stasis"/></svg>
+        <span class="po-name">凝滞</span>
+        <small id="propCount-stasis">0</small>
+      </button>
     </div>
 
     <!-- 星体选择栏：默认隐藏，游戏开始后显示 -->
     <div id="starBar" class="star-bar hidden">
-      <span class="star-bar-label">放置：</span>
-      <!-- 价格标签由 JS 按当前专精刷新（id 供 syncStarBarPrices 定位）；静态文本是"未执行脚本"时的兜底基准价 -->
-      <button class="star-opt" data-star="small">小行星<small id="starCost-small">50</small></button>
-      <button class="star-opt" data-star="mid">中行星<small id="starCost-mid">150</small></button>
-      <button class="star-opt selected" data-star="large">大行星<small id="starCost-large">300</small></button>
-      <button class="star-opt" data-star="star">恒星<small id="starCost-star">500</small></button>
-      <button class="star-opt bh" data-star="blackhole">黑洞<small id="starCost-blackhole">1500</small></button>
-      <!-- 星体专精（v1.11）：引力型 = 基准值；巨型 = 碰撞面大 50%、引力弱 20%、贵 20% -->
-      <span class="star-bar-label spec-label">专精：</span>
-      <button id="spec-gravity" class="spec-opt selected" data-spec="gravity">引力型<small>标准</small></button>
-      <button id="spec-giant" class="spec-opt" data-spec="giant">巨型<small>+20% 价</small></button>
-      <span id="specPreview" class="spec-preview"></span>
+      <div class="star-bar-main">
+        <span class="star-bar-label">放置</span>
+        <!-- 价格标签由 JS 按当前专精刷新（id 供 syncStarBarPrices 定位）；静态文本是"未执行脚本"时的兜底基准价 -->
+        <button class="star-opt" data-star="small">
+          <svg class="ic"><use href="#ic-orbit"/></svg>
+          <span class="so-name">小行星</span><small id="starCost-small">50</small>
+        </button>
+        <button class="star-opt" data-star="mid">
+          <svg class="ic"><use href="#ic-planet"/></svg>
+          <span class="so-name">中行星</span><small id="starCost-mid">150</small>
+        </button>
+        <button class="star-opt selected" data-star="large">
+          <svg class="ic"><use href="#ic-planet"/></svg>
+          <span class="so-name">大行星</span><small id="starCost-large">300</small>
+        </button>
+        <button class="star-opt" data-star="star">
+          <svg class="ic"><use href="#ic-star"/></svg>
+          <span class="so-name">恒星</span><small id="starCost-star">500</small>
+        </button>
+        <button class="star-opt bh" data-star="blackhole">
+          <svg class="ic"><use href="#ic-blackhole"/></svg>
+          <span class="so-name">黑洞</span><small id="starCost-blackhole">1500</small>
+        </button>
+      </div>
+      <div class="star-bar-spec">
+        <!-- 星体专精（v1.11）：引力型 = 基准值；巨型 = 碰撞面大 50%、引力弱 20%、贵 20% -->
+        <span class="star-bar-label spec-label">专精</span>
+        <div class="seg">
+          <button id="spec-gravity" class="spec-opt selected" data-spec="gravity">引力型<small>标准</small></button>
+          <button id="spec-giant" class="spec-opt" data-spec="giant">巨型<small>+20% 价</small></button>
+        </div>
+        <span id="specPreview" class="spec-preview"></span>
+      </div>
     </div>
+    </div><!-- /.bottom-stack -->
 
-    <!-- 操作按钮：默认隐藏，游戏开始后显示 -->
+    <!-- 操作按钮：默认隐藏，游戏开始后显示。
+         常驻操作只保留「减速 / 撤销 / 暂停」；预警 / 音效 / 预测线 / 重新开始 / 返回菜单 / 清除进度
+         已迁入暂停覆盖层与设置面板（id 与绑定保持不变，避免"元素被移走但代码仍写它"）。 -->
     <div id="controls" class="controls hidden">
       <button id="slowBtn" class="ctrl">时间：正常</button>
       <button id="undoBtn" class="ctrl">撤销</button>
-      <button id="warnBtn" class="ctrl">预警：开</button>
-      <button id="audioBtn" class="ctrl">音效：开</button>
-      <button id="hintBtn" class="ctrl">预测：开</button>
-      <button id="restartBtn" class="ctrl restart">重新开始</button>
-      <button id="menuBtn" class="ctrl ghost">返回菜单</button>
-      <button id="clearBtn" class="ctrl danger">清除进度</button>
+      <button id="pauseBtn" class="ctrl pause-btn"><svg class="ic ic-sm"><use href="#ic-pause"/></svg>暂停</button>
     </div>
 
     <!-- 提示信息：仅游戏中使用 -->
@@ -97,13 +288,84 @@
     <!-- 关卡横幅（每次开局淡入淡出） -->
     <div id="levelBanner"></div>
 
-    <!-- 星体操作面板：点选场上星体后出现（升级 / 回收） -->
-    <div id="bodyPanel" class="body-panel" style="display:none">
-      <span id="bpName" class="bp-name">星体</span>
-      <button id="bpUpgrade" class="ctrl">升级</button>
-      <button id="bpSwitchSpec" class="ctrl">切换专精</button>
-      <button id="bpRecycle" class="ctrl">回收</button>
-      <button id="bpClose" class="ctrl ghost">关闭</button>
+    <!-- ================= 暂停覆盖层（v1.13 新增） =================
+         暂停由 game.state.paused 驱动（stepFrame 顶部早退，冻结一切游戏态推进）。
+         本层只做展示与入口：P / Esc 继续，Esc 在有选中星体或已选道具时优先取消。 -->
+    <div id="pause" class="pause hidden">
+      <div class="pause-card">
+        <div class="pause-head">
+          <div class="ph-title"><svg class="ic"><use href="#ic-pause"/></svg>已暂停</div>
+          <div class="ph-sub" id="pauseSub">—</div>
+        </div>
+        <div class="pause-stats">
+          <div class="ps-item"><span class="ps-label">波次</span><span class="ps-val" id="pauseWave">0</span></div>
+          <div class="ps-item"><span class="ps-label">分数</span><span class="ps-val" id="pauseScore">0</span></div>
+          <div class="ps-item"><span class="ps-label">拦截</span><span class="ps-val" id="pauseCleared">0</span></div>
+          <div class="ps-item"><span class="ps-label">减速余额</span><span class="ps-val" id="pauseSlow">0s</span></div>
+        </div>
+        <div class="pause-actions">
+          <button id="pauseResume" class="opt-btn primary"><svg class="ic ic-sm"><use href="#ic-play"/></svg>继续游戏</button>
+          <button id="restartBtn" class="opt-btn"><svg class="ic ic-sm"><use href="#ic-restart"/></svg><span id="restartLabel">重新开始</span></button>
+          <button id="menuBtn" class="opt-btn"><svg class="ic ic-sm"><use href="#ic-home"/></svg><span id="menuLabel">返回菜单</span></button>
+          <button id="pauseSettingsBtn" class="opt-btn"><svg class="ic ic-sm"><use href="#ic-gear"/></svg>设置</button>
+        </div>
+        <div class="pause-danger">
+          <button id="clearBtn" class="opt-btn danger"><svg class="ic ic-sm"><use href="#ic-trash"/></svg><span id="clearLabel">清除进度</span></button>
+          <span class="pd-hint">清除本机全部存档（星级 / 成就 / 统计等），不可撤销</span>
+        </div>
+        <p class="pause-tip">按 <kbd>P</kbd> 或 <kbd>Esc</kbd> 继续 · <kbd>Z</kbd> 撤销最近放置 · 暂停期间计时与资源消耗全部冻结</p>
+      </div>
+    </div>
+
+    <!-- ================= 设置面板（v1.13 新增，主菜单与暂停层共用） =================
+         单一实例（避免同 id 重复），由 data-from 记录来源：'menu' → 关闭后回菜单，'pause' → 关闭后回暂停层。 -->
+    <div id="settings" class="settings hidden" data-from="menu">
+      <div class="settings-card">
+        <div class="settings-head">
+          <div class="sh-title"><svg class="ic"><use href="#ic-gear"/></svg>设置</div>
+          <div class="sh-sub">改动实时生效，并保存在本机</div>
+        </div>
+        <div class="settings-body">
+          <button id="hintBtn" class="setting-row">
+            <svg class="ic"><use href="#ic-eye"/></svg>
+            <span class="sr-text"><span class="sr-name">预测线</span><span class="sr-sub">拖拽放置时显示轨迹预览</span></span>
+            <span class="sr-state" id="hintState">开</span>
+            <span class="switch" aria-hidden="true"></span>
+          </button>
+          <button id="warnBtn" class="setting-row">
+            <svg class="ic"><use href="#ic-alert"/></svg>
+            <span class="sr-text"><span class="sr-name">撞母星预警</span><span class="sr-sub">标记 6 秒内将撞上母星的威胁</span></span>
+            <span class="sr-state" id="warnState">开</span>
+            <span class="switch" aria-hidden="true"></span>
+          </button>
+          <button id="audioBtn" class="setting-row">
+            <svg class="ic"><use href="#ic-sound"/></svg>
+            <span class="sr-text"><span class="sr-name">音效</span><span class="sr-sub">合成音效（无音频文件）</span></span>
+            <span class="sr-state" id="audioState">开</span>
+            <span class="switch" aria-hidden="true"></span>
+          </button>
+          <div class="setting-row slider-row">
+            <svg class="ic"><use href="#ic-slider"/></svg>
+            <span class="sr-text"><span class="sr-name">主音量</span><span class="sr-sub">影响全部音效（0 为静音）</span></span>
+            <input id="volumeRange" class="slider" type="range" min="0" max="100" step="5" value="80"
+                   aria-label="主音量">
+            <span class="sr-state" id="volumeState">80%</span>
+          </div>
+          <button id="motionBtn" class="setting-row">
+            <svg class="ic"><use href="#ic-motion"/></svg>
+            <span class="sr-text"><span class="sr-name">减少动效</span><span class="sr-sub">关闭过渡与脉冲动画（也遵循系统偏好）</span></span>
+            <span class="sr-state" id="motionState">关</span>
+            <span class="switch" aria-hidden="true"></span>
+          </button>
+        </div>
+        <div class="settings-danger">
+          <button id="settingsClearProg" class="opt-btn danger"><svg class="ic ic-sm"><use href="#ic-trash"/></svg><span id="settingsClearLabel">清除全部进度</span></button>
+          <span class="sd-hint">删除本机全部存档，回到第 1 关重新开始</span>
+        </div>
+        <div class="settings-actions">
+          <button id="settingsClose" class="opt-btn primary">返回</button>
+        </div>
+      </div>
     </div>
 
     <!-- 失败结算面板：默认隐藏 -->
@@ -122,10 +384,22 @@
         <div id="resultAchieve" class="result-achieve" style="display:none"></div>
 
         <div class="result-overview">
-          <div id="rsWavesItem"><span class="rs-label">撑过波次</span><span id="rsWaves">0</span></div>
-          <div><span class="rs-label">母星受击</span><span id="rsHits">0</span></div>
-          <div><span class="rs-label">拦截威胁</span><span id="rsCleared">0</span></div>
-          <div><span class="rs-label">星能花费</span><span id="rsSpent">0</span></div>
+          <div id="rsWavesItem">
+            <span class="rs-label"><svg class="ic ic-sm"><use href="#ic-wave"/></svg>撑过波次</span>
+            <span id="rsWaves">0</span>
+          </div>
+          <div>
+            <span class="rs-label"><svg class="ic ic-sm"><use href="#ic-heart"/></svg>母星受击</span>
+            <span id="rsHits">0</span>
+          </div>
+          <div>
+            <span class="rs-label"><svg class="ic ic-sm"><use href="#ic-target"/></svg>拦截威胁</span>
+            <span id="rsCleared">0</span>
+          </div>
+          <div>
+            <span class="rs-label"><svg class="ic ic-sm"><use href="#ic-budget"/></svg>星能花费</span>
+            <span id="rsSpent">0</span>
+          </div>
         </div>
 
         <!-- 结局文案（v1.11）：仅闯关第 40 关与隐藏关通关时展示 -->
@@ -134,9 +408,6 @@
         <div id="resultTask" class="result-task" style="display:none"></div>
         <!-- 本关最佳记录对比（v1.10，新纪录高亮） -->
         <div id="resultRecord" class="result-record" style="display:none"></div>
-        <!-- 历史榜单名次（v1.11，5 条截断） -->
-        <div id="resultBoard" class="result-board" style="display:none"></div>
-
         <!-- 计分规则与明细 -->
         <div class="score-breakdown">
           <div class="sd-head">
@@ -175,36 +446,44 @@
           <button id="resultNext" class="opt-btn primary" style="display:none">下一关</button>
           <button id="resultRetry" class="opt-btn primary">再来一局</button>
           <button id="resultMenu" class="opt-btn">返回菜单</button>
-          <button id="resultClear" class="opt-btn danger">清除进度</button>
+          <button id="resultClear" class="opt-btn danger"><span id="resultClearLabel">清除进度</span></button>
         </div>
       </div>
     </div>
 
     <!-- 开始菜单：默认显示，强遮罩 -->
     <div id="menu" class="menu">
-      <h1>星盾防线</h1>
-      <p class="subtitle">StarShield · 用引力守护母星</p>
+      <div class="menu-brand">
+        <div class="menu-logo"><svg class="ic ic-lg"><use href="#ic-shield"/></svg></div>
+        <h1>星盾防线</h1>
+        <p class="subtitle">StarShield · 用引力守护母星</p>
+      </div>
 
       <div class="menu-section">
         <div class="menu-title">选择模式</div>
         <div class="mode-cards">
           <button class="mode-card selected" data-mode="survival">
+            <svg class="ic ic-lg"><use href="#ic-target"/></svg>
             <div class="mc-name">生存模式</div>
             <div class="mc-desc">无限星能 · 比拼分数<br>陨石随机来袭，活得越久分数越高</div>
           </button>
           <button class="mode-card" data-mode="campaign">
+            <svg class="ic ic-lg"><use href="#ic-shield"/></svg>
             <div class="mc-name">闯关模式</div>
             <div class="mc-desc">固定星能 · 层层递进<br>40 关 + 2 隐藏关，通关解锁下一关，比拼通关进度</div>
           </button>
           <button class="mode-card" data-mode="endless">
+            <svg class="ic ic-lg"><use href="#ic-wave"/></svg>
             <div class="mc-name">无尽模式</div>
-            <div class="mc-desc">无限波次 · 比拼最高波数<br>难度封顶后仍缓慢上升，看你能守到第几波</div>
+            <div class="mc-desc">无限波次 · 比拼最高波数<br>每 10 波一个阶段，收尾波是风暴波</div>
           </button>
           <button class="mode-card" data-mode="challenge">
+            <svg class="ic ic-lg"><use href="#ic-alert"/></svg>
             <div class="mc-name">挑战模式</div>
             <div class="mc-desc">40 关 + 递增修饰符 · 独立进度<br>禁道具 / 星能减半 / 来袭加速，闯关的进阶版</div>
           </button>
           <button class="mode-card" data-mode="daily">
+            <svg class="ic ic-lg"><use href="#ic-clock"/></svg>
             <div class="mc-name">每日挑战</div>
             <div class="mc-desc">每日一变 · 比拼当日最高分<br><span id="dailyBest">今日未挑战</span></div>
           </button>
@@ -230,20 +509,24 @@
       <!-- 成就面板（本地存档，可折叠） -->
       <div class="menu-section">
         <div class="menu-title" id="achieveTitle">成就</div>
-        <button id="achieveToggle" class="opt-btn">展开成就</button>
+        <button id="achieveToggle" class="opt-btn fold"><span id="achieveToggleLabel">展开成就</span><svg class="ic ic-sm fold-arrow"><use href="#ic-chevron"/></svg></button>
         <div id="achieveList" class="achieve-list" style="display:none"></div>
       </div>
 
-      <!-- 星图总览（v1.11）：收集进度 / 统计摘要 / 历史榜单，可折叠 -->
+      <!-- 星图总览（v1.11）：收集进度 / 统计摘要，可折叠 -->
       <div class="menu-section">
         <div class="menu-title" id="collectTitle">星图总览</div>
-        <button id="collectToggle" class="opt-btn">展开总览</button>
+        <button id="collectToggle" class="opt-btn fold"><span id="collectToggleLabel">展开总览</span><svg class="ic ic-sm fold-arrow"><use href="#ic-chevron"/></svg></button>
         <div id="collectList" class="collect-list" style="display:none"></div>
       </div>
 
       <div class="menu-footer">
-        <button id="menuClearProg" class="opt-btn danger">一键清除进度</button>
+        <div class="menu-footer-actions">
+          <button id="menuSettingsBtn" class="opt-btn"><svg class="ic ic-sm"><use href="#ic-gear"/></svg>设置</button>
+          <button id="menuClearProg" class="opt-btn danger"><svg class="ic ic-sm"><use href="#ic-trash"/></svg><span id="menuClearLabel">一键清除进度</span></button>
+        </div>
         <p class="footer-hint">清除后将从第 1 关重新挑战，并清空星级 / 成就 / 挑战 / 每日 / 任务 / 纪录 / 统计等全部本机存档</p>
+        <p class="footer-tag">纯单机 · 离线可玩 · 进度仅保存在本机</p>
       </div>
     </div>
   </div>
