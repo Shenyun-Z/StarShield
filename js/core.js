@@ -288,4 +288,9 @@
   SS.rand = rand;
   SS.randInt = randInt;
   SS.lerp = lerp;
+  // ===== 可变标量（需被赋值；作为 SS 属性跨文件共享，避免值拷贝失效）=====
+  SS.stepAccumulator = 0;   // 未消耗的真实时间（秒）
+  SS.bestScore = 0;
+  SS.bestWaves = 0;
+  SS.campaignUnlocked = 0;  // 已解锁的最大关卡索引（成就：通关到「第 N 关」）
 })();

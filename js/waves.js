@@ -4,7 +4,9 @@
   'use strict';
   const SS = window.SS || (window.SS = {});
   const {
-    MAX_TOTAL_BODIES, PROP_MAX_EACH, MAX_PARTICLES, SLOW_QUOTA_MAX, SLOW_REFUND_PER_WAVE, SLOW_LOW_RATIO, CHAPTERS, state, clamp, rand, randInt, lerp,
+    MAX_TOTAL_BODIES, PROP_MAX_EACH, MAX_PARTICLES, SLOW_QUOTA_MAX, SLOW_REFUND_PER_WAVE,
+    SLOW_LOW_RATIO, CHAPTERS, state, clamp, rand,
+    randInt, lerp,
   } = SS;
 
   // ===== 随机波次生成 =====

@@ -83,9 +83,14 @@ function testDamagePlanetOnHitStar() {
 }
 
 // ---- 5. 回归：无初始黑洞（setupLevel 不应 push type=blackhole 的天体） ----
-// 由于 game.js 依赖 DOM，这里静态确认 setupLevel 已移除黑洞放置（grep 验证）
+// 由于游戏层依赖 DOM，这里静态确认 setupLevel 已移除黑洞放置（grep 验证）。
+// v1.13：游戏层已拆为 js/core.js、js/waves.js、js/world.js、js/game.js，
+// 故按集中清单（test/helpers/sandbox.js 的 GAME_FILES）拼接源码后再检查，
+// 后续再拆分时无需再改本断言。
 function testNoInitialBlackhole() {
-  const gameCode = fs.readFileSync(path.join(root, 'js/game.js'), 'utf8');
+  const { GAME_FILES } = require('./helpers/sandbox.js');
+  const gameCode = GAME_FILES
+    .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
   // 找 setupLevel 函数体内对 blackhole 的 push
   const m = gameCode.match(/function setupLevel\(\)\s*\{([\s\S]*?)\n  \}/);
   if (!m) { console.error('FAIL: 未找到 setupLevel'); return false; }
