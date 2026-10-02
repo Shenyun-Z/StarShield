@@ -8,6 +8,7 @@
 //   G. 最佳记录：择优写入、新纪录标记
 //   H. 存档健壮性：损坏回退、清除进度复位、单机自查（无任何网络 API）
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, SOURCE_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -68,7 +69,7 @@ function createSandbox(preload, opts) {
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
   if (opts && opts.dailyLevel) sandbox.window.makeDailyChallenge = () => opts.dailyLevel;
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   // 浏览器里 window 即全局对象；沙箱里必须显式桥接（否则模块内裸引用会静默短路）
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
@@ -76,7 +77,7 @@ function createSandbox(preload, opts) {
   sandbox.render = sandbox.window.render;
   sandbox.game = sandbox.window.game;
   // opts.withInput：加载交互层（用于 UI 渲染断言）
-  if (opts && opts.withInput) load('js/input.js');
+  if (opts && opts.withInput) loadFiles(load, UI_FILES);
   return {
     sandbox, game: sandbox.window.game, physics: sandbox.window.physics, ls: sandbox.localStorage,
     createdEls, el: (id) => (elCache[id] || (elCache[id] = stubEl(id))),
@@ -540,8 +541,7 @@ console.log('--- H. 存档健壮性 / 清除 / 单机自查 ---');
 }
 {
   // 单机自查：源码不得含任何网络请求 API
-  const files = ['js/physics.js', 'js/predictor.js', 'js/predictorRenderer.js', 'js/audio.js',
-    'js/render.js', 'js/levels-campaign.js', 'js/game.js', 'js/input.js'];
+  const files = SOURCE_FILES;
   const netRe = /\b(fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\s*\(/;
   const offenders = files.filter(f => netRe.test(fs.readFileSync(path.join(root, f), 'utf8')));
   assert('纯单机自查：全部模块无网络请求 API', offenders.length === 0, offenders.join(','));

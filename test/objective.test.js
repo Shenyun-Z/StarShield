@@ -1,5 +1,6 @@
 // 关卡目标 / 结束条件 / 常驻进度 / 结算「下一关」 集成测试（需求：目标清晰显示）
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -25,12 +26,12 @@ function load(f) { vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), 
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '30');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 const game = sandbox.window.game;
 sandbox.game = game;
 sandbox.physics = sandbox.window.physics;
 sandbox.render = sandbox.window.render;
-load('js/input.js');   // 提供 __showResult / __refreshMenuBest
+loadFiles(load, UI_FILES);   // 提供 __showResult / __refreshMenuBest
 const showResult = sandbox.window.__showResult;
 
 let ok = true;

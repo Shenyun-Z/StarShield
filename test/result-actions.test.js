@@ -11,6 +11,7 @@
 //   G. 时间流速每局复位为 1×
 //   H. 星体栏价格随专精刷新（与实扣一致）
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -76,14 +77,14 @@ function createSandbox(preload) {
   const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
   sandbox.predictorRenderer = sandbox.window.predictorRenderer;
   sandbox.audio = sandbox.window.audio;
   sandbox.render = sandbox.window.render;
   sandbox.game = sandbox.window.game;
-  load('js/input.js');                              // 注册 __showResult 与结算面板按钮
+  loadFiles(load, UI_FILES);                              // 注册 __showResult 与结算面板按钮
   return {
     sandbox, game: sandbox.window.game, ls: sandbox.localStorage,
     el: (id) => elCache[id] || (elCache[id] = makeEl(id)),

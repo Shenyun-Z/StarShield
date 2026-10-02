@@ -8,6 +8,7 @@
 //   P0-4 设置持久化：默认值 / 落盘与往返 / 非法键与类型拒绝 / 损坏存档回退并提示 /
 //        清除进度一并删除并复位内存
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -59,7 +60,7 @@ vm.createContext(sandbox);
 function load(f) { vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f }); }
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 // 浏览器里 window 即全局对象，各模块的裸引用（physics/predictor/...）可直接解析；
 // 沙箱里 window 是独立对象，必须显式桥接到沙箱全局（既有测试同做法）。
 sandbox.physics = sandbox.window.physics;
@@ -67,7 +68,7 @@ sandbox.predictor = sandbox.window.predictor;
 sandbox.audio = sandbox.window.audio;
 sandbox.render = sandbox.window.render;
 sandbox.game = sandbox.window.game;
-load('js/input.js');   // 注册 predictorRenderer.attach 与 __showResult 等钩子
+loadFiles(load, UI_FILES);   // 注册 predictorRenderer.attach 与 __showResult 等钩子
 
 let ok = true;
 function assert(name, cond, extra) {

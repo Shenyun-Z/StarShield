@@ -6,6 +6,7 @@
 //   P1-C 成就：声明式定义完整性、幂等解锁、队列一次性消费、存档往返与损坏回退、清除复位
 //   其它：getCurrentRunStats 扩展字段（只增不改）与减速时长统计
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -62,14 +63,14 @@ function createSandbox(preload, withInput) {
   const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   // 浏览器里 window 即全局对象；沙箱里必须显式桥接（否则模块内裸引用会静默短路）
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
   sandbox.audio = sandbox.window.audio;
   sandbox.render = sandbox.window.render;
   sandbox.game = sandbox.window.game;
-  if (withInput !== false) load('js/input.js');
+  if (withInput !== false) loadFiles(load, UI_FILES);
   return {
     sandbox,
     game: sandbox.window.game,

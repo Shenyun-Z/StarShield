@@ -1,0 +1,203 @@
+/* StarShield —— screens.css：⑦ 控制条·操作面板·提示·横幅 / ⑧ 暂停层与设置面板 / ⑨ 结算面板 / ⑩ 菜单 */
+
+/* ================= ⑦ 控制条 / 操作面板 / 提示 / 横幅 ================= */
+.controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: var(--sp-3);
+  justify-content: center;
+  align-items: center;
+  padding: 12px;
+  background: linear-gradient(0deg, rgba(5, 10, 20, 0.88), rgba(5, 10, 20, 0.35) 60%, rgba(5, 10, 20, 0));
+  flex-wrap: wrap;
+  z-index: var(--z-hud);
+}
+.ctrl {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 9px 16px;
+  border: 1px solid var(--stroke-2);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, rgba(26, 40, 68, 0.78), rgba(12, 20, 38, 0.78));
+  color: var(--text-1);
+  font-size: var(--fs-base);
+  box-shadow: var(--in-hi);
+}
+.ctrl:disabled { opacity: 0.35; cursor: not-allowed; }
+/* 减速额度三态（类名由 syncControlButtons 驱动，勿改名） */
+.ctrl.low {
+  color: var(--warn);
+  border-color: rgba(255, 196, 107, 0.55);
+  box-shadow: var(--in-hi), 0 0 12px rgba(255, 196, 107, 0.18);
+}
+.ctrl.on {
+  border-color: rgba(140, 190, 255, 0.55);
+  box-shadow: var(--in-hi), inset 0 0 10px rgba(90, 140, 255, 0.20);
+}
+.ctrl.exhausted { opacity: 0.45; color: var(--text-3); }
+.ctrl.ghost { background: rgba(12, 18, 32, 0.7); color: var(--primary-2); border-color: var(--stroke-1); }
+.ctrl.danger { background: rgba(40, 20, 25, 0.72); color: #ff8a7a; border-color: var(--stroke-danger); }
+.ctrl.danger:hover { background: rgba(60, 25, 30, 0.9); border-color: rgba(255, 110, 90, 0.6); }
+.ctrl.pause-btn .ic { color: var(--primary); }
+
+/* 二次确认武装态（dataset.armed 同步；类名来自 JS，勿改名） */
+.restart.armed, .armed {
+  background: linear-gradient(180deg, rgba(170, 48, 48, 0.92), rgba(120, 30, 30, 0.92)) !important;
+  border-color: rgba(255, 120, 120, 0.7) !important;
+  color: #fff !important;
+  font-weight: 700;
+  animation: chipPulse 1s ease-in-out infinite;
+}
+
+/* 轻提示 toast */
+.message {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  text-align: center;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(18, 28, 50, 0.9), rgba(8, 14, 28, 0.9));
+  border: 1px solid var(--stroke-2);
+  border-radius: var(--r-pill);
+  padding: 8px 18px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease);
+  z-index: 6;
+  max-width: 86vw;
+  box-shadow: var(--sh-1), var(--in-hi);
+}
+.message.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 星体操作面板 */
+.body-panel {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 8px 12px;
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(16, 26, 46, 0.92), rgba(8, 14, 26, 0.92));
+  border: 1px solid var(--stroke-2);
+  box-shadow: var(--sh-2), var(--in-hi);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  flex-wrap: wrap;
+  animation: itemIn var(--dur-3) var(--ease);
+}
+.bp-name { font-size: var(--fs-md); color: var(--primary-2); letter-spacing: .5px; }
+
+/* Boss 分段血条 */
+.boss-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 74px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 6px 16px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, rgba(44, 14, 62, 0.86), rgba(24, 8, 36, 0.86));
+  border: 1px solid rgba(200, 155, 255, 0.45);
+  box-shadow: 0 0 22px rgba(160, 90, 230, 0.28), var(--in-hi);
+  z-index: 6;
+}
+.bb-label { font-size: var(--fs-sm); letter-spacing: 2px; color: #d9a6ff; font-weight: 700; }
+.bb-segs { display: flex; gap: 4px; }
+.bb-seg {
+  width: 20px;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(90, 50, 130, 0.6);
+  border: 1px solid rgba(200, 155, 255, 0.35);
+  transition: background var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+.bb-seg.on {
+  background: linear-gradient(180deg, #f0c8ff, #a25ce0);
+  box-shadow: 0 0 8px rgba(200, 155, 255, 0.6);
+}
+
+/* 关卡横幅 */
+#levelBanner {
+  position: absolute;
+  top: 13%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-6px);
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease), transform var(--dur-3) var(--ease);
+  z-index: var(--z-float);
+  width: min(620px, 88vw);
+  padding: 14px 18px;
+  border-radius: var(--r-xl);
+  border: 1px solid transparent;
+}
+#levelBanner.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  border-color: var(--stroke-1);
+  background: linear-gradient(180deg, rgba(10, 18, 34, 0.72), rgba(8, 14, 26, 0.5));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--sh-1);
+}
+#levelBanner .lb-name {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  letter-spacing: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+#levelBanner .lb-goal {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 14px;
+  font-size: var(--fs-base);
+  color: var(--text-0);
+  background: rgba(18, 28, 48, 0.82);
+  border: 1px solid rgba(111, 220, 255, 0.35);
+  border-radius: var(--r-pill);
+  line-height: 1.5;
+}
+#levelBanner .lb-fail {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-size: var(--fs-md);
+  color: #ffb3a3;
+  background: rgba(40, 20, 25, 0.82);
+  border: 1px solid rgba(255, 110, 90, 0.4);
+  border-radius: var(--r-pill);
+  line-height: 1.5;
+}
+#levelBanner .lb-story {
+  display: block;
+  max-width: 640px;
+  margin: 6px auto 0;
+  font-size: var(--fs-md);
+  line-height: 1.7;
+  color: var(--text-2);
+}
+#levelBanner .lb-task {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-size: var(--fs-md);
+  color: var(--gold);
+  background: rgba(40, 34, 16, 0.82);
+  border: 1px solid rgba(255, 226, 138, 0.35);
+  border-radius: var(--r-pill);
+}

@@ -5,6 +5,7 @@
 //   4) 闯关确定性波次的 edge 字符串映射（left/right 正确落到左右边界）
 //   5) 生存模式来袭瞄准母星（偏角随难度收窄，不再全向乱飞白送拦截分）
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -29,12 +30,12 @@ vm.createContext(sandbox);
 function load(f) { vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f }); }
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 sandbox.physics = sandbox.window.physics;
 sandbox.audio = sandbox.window.audio;
 sandbox.render = sandbox.window.render;
 sandbox.game = sandbox.window.game;
-load('js/input.js');   // 注册 __showResult / __refreshMenuBest 钩子
+loadFiles(load, UI_FILES);   // 注册 __showResult / __refreshMenuBest 钩子
 
 let ok = true;
 function assert(name, cond, extra) { if (!cond) { console.error('FAIL: ' + name + (extra ? ' (' + extra + ')' : '')); ok = false; } else console.log('PASS: ' + name); }

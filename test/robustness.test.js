@@ -3,6 +3,7 @@
 //   M1 黑洞游戏时钟        M2 分数单数据源            M3 预测 AABB 剪枝     M4（CI/入口由 run-all 覆盖）
 //   M5 预测性能红线常量    M6 母星受击规则            M7 存档异常反馈       M8 粒子上限
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -84,14 +85,14 @@ function load(f) { vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), 
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '3');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 sandbox.physics = sandbox.window.physics;
 sandbox.audio = sandbox.window.audio;
 sandbox.predictor = sandbox.window.predictor;
 sandbox.predictorRenderer = sandbox.window.predictorRenderer;
 sandbox.render = sandbox.window.render;
 sandbox.game = sandbox.window.game;
-load('js/input.js');   // 注册 canvas/window 事件与主循环
+loadFiles(load, UI_FILES);   // 注册 canvas/window 事件与主循环
 
 const game = sandbox.window.game;
 const physics = sandbox.window.physics;

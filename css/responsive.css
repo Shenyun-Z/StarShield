@@ -1,0 +1,97 @@
+/* StarShield —— responsive.css：⑬ 响应式（全部 @media 断点） */
+
+/* ================= ⑬ 响应式 ================= */
+
+/* 超宽屏（≥1920）：限制 HUD 与菜单的最大铺开宽度，避免元素被拉散 */
+@media (min-width: 1920px) {
+  .menu-section, .menu-best { width: min(760px, 90vw); }
+  .level-cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .hud { padding: 12px 26px 14px; }
+  .hud-inner { max-width: 1800px; margin: 0 auto; }
+}
+
+/* 小桌面（≤1279）：收紧间距与按钮内边距 */
+@media (max-width: 1279px) {
+  .hud { gap: 4px; padding: 8px 12px 10px; }
+  .hud-left, .hud-right { gap: 10px; }
+  .star-opt { min-width: 56px; padding: 5px 8px; }
+}
+
+/* 平板 / 横屏矮屏（≤1023 或高度 ≤560）：HUD 换行、道具栏与星体栏上移 */
+@media (max-width: 1023px), (max-height: 560px) {
+  .hud { font-size: var(--fs-md); }
+  .hud-right { margin-left: 0; }
+  .best-group { margin-left: 0; }
+  .hud-sub { gap: 6px; }
+  .menu { gap: 12px; padding: 20px 16px 26px; }
+  .result-card { max-height: 94vh; }
+}
+
+/* 手机（≤767）：单列模式卡、面板铺满、按钮加大触控面 */
+@media (max-width: 767px) {
+  .hud { padding: 7px 10px 8px; gap: 3px; }
+  .hud-inner { gap: 6px; }
+  .hud-group { padding: 3px 8px; gap: 4px; }
+  .mode-tag { padding: 3px 9px; }
+  .health-bar { width: 84px; }
+  .mode-cards { grid-template-columns: 1fr; }
+  .level-cards { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .menu h1 { font-size: 30px; letter-spacing: 4px; }
+  .start-btn { padding: 13px 30px; font-size: var(--fs-lg); width: min(360px, 86vw); justify-content: center; }
+  .pause-card, .settings-card { padding: 18px 16px 14px; max-width: 100%; }
+  .pause-actions .opt-btn { flex: 1 1 100%; }
+  .result-card { padding: 20px 16px; min-width: 0; }
+  .result-overview { grid-template-columns: 1fr; }
+  .result-actions .opt-btn { flex: 1 1 44%; justify-content: center; }
+  .bottom-stack { bottom: 58px; gap: 6px; }
+  .prop-bar { gap: 6px; padding: 5px 8px; }
+  /* 窄屏：道具项改为横排一行（图标 + 名称 + 数量），避免纵向堆叠占满半个屏幕 */
+  .prop-opt { flex-direction: row; align-items: center; gap: 5px; padding: 6px 9px; }
+  .prop-opt .po-name { font-size: var(--fs-sm); }
+  .prop-opt small { margin-top: 0; }
+  .prop-opt, .star-opt { padding: 6px 9px; }
+  .star-bar { padding: 6px 8px; }
+  .ctrl { padding: 9px 13px; }
+  #levelBanner { width: 92vw; padding: 10px 12px; }
+  #levelBanner .lb-name { font-size: var(--fs-xl); }
+}
+
+/* 窄屏（≤520）：保留既有断点语义，进一步压缩 */
+@media (max-width: 520px) {
+  .hud { font-size: var(--fs-md); gap: 3px; padding: 6px 8px; }
+  .hud-label { display: none; }
+  .health-bar { width: 64px; }
+  .ctrl { padding: 8px 11px; font-size: var(--fs-md); }
+  .menu h1 { font-size: 26px; }
+  .start-btn { padding: 12px 26px; font-size: var(--fs-lg); }
+  .result-card { padding: 18px 14px; min-width: 0; }
+  .result-overview { grid-template-columns: 1fr; }
+  /* 窄屏：预告胶囊允许换行到第二行，不产生横向溢出 */
+  .preview-group { flex-wrap: wrap; }
+  .wp-body { gap: 6px; }
+  #levelBanner .lb-story { padding: 0 8px; }
+  .stage-group { flex-wrap: wrap; }
+  .collect-row { flex-direction: column; gap: 0; line-height: 1.6; }
+  .collect-row .cr-value { text-align: left; }
+  /* 成就分组网格：窄屏回落单列 */
+  .ag-grid { grid-template-columns: 1fr; }
+  .sr-sub { display: none; }
+  .pause-stats { grid-template-columns: 1fr; }
+  .star-bar-label { display: none; }
+}
+
+/* 极窄屏（≤400）：星体栏改为两行网格，保证触控目标 ≥40px */
+@media (max-width: 400px) {
+  .star-bar-main { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .star-opt { min-width: 0; }
+  .star-opt .so-name { font-size: var(--fs-sm); }
+}
+
+/* 触控设备 / 鼠标：hover 反馈只在支持悬停的设备启用，避免移动端"粘滞悬停" */
+@media (hover: none) {
+  .ctrl:hover, .opt-btn:hover, .prop-opt:hover, .star-opt:hover,
+  .spec-opt:hover, .mode-card:hover, .level-card:hover, .setting-row:hover {
+    background: inherit;
+    border-color: inherit;
+  }
+}

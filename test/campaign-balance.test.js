@@ -9,6 +9,7 @@
 //      因此 C 的断言刻意取"布防有效"而非"必胜"，避免把策略不足误判为关卡不可达；
 //   3) 时间被截断：模拟有帧数上限，断言的是"有界时间内有进展"，不是跑到通关。
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -67,7 +68,7 @@ load('js/physics.js'); load('js/audio.js'); load('js/levels-campaign.js');
 // 关键：先解锁全部关卡再加载 game.js。否则 startGame(未解锁关卡) 返回 false，
 // state 会残留上一局的终局状态 —— 模拟出来的数据全是假的（曾因此误判过关）。
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '40');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 sandbox.physics = sandbox.window.physics;
 sandbox.audio = sandbox.window.audio;
 sandbox.game = sandbox.window.game;

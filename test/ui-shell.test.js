@@ -10,8 +10,10 @@
 //     D. 结构与样式契约：id 双向对照（无缺失、无重复）、关键文本格式与 display 语义不变、
 //        被 JS 写入的 class 均已在 CSS 中定义、设计 token 与多档断点存在、动效降级通道存在、括号配平
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, SOURCE_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
+const readAllCss = require('./helpers/css');
 const root = path.join(__dirname, '..');
 
 function ctx2d() {
@@ -81,14 +83,14 @@ function createSandbox(preload) {
   const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
   sandbox.predictorRenderer = sandbox.window.predictorRenderer;
   sandbox.audio = sandbox.window.audio;
   sandbox.render = sandbox.window.render;
   sandbox.game = sandbox.window.game;
-  load('js/input.js');
+  loadFiles(load, UI_FILES);
   return {
     sandbox, game: sandbox.window.game, ls: sandbox.localStorage,
     el: (id) => elCache[id] || (elCache[id] = makeEl(id)),
@@ -342,8 +344,24 @@ console.log('--- C. 交互链路：暂停覆盖层、快捷键优先级、设置
 console.log('--- D. 结构与样式契约（id 对照 / class 定义 / token / 断点 / 降级）---');
 {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
+  const css = readAllCss();
   const inputSrc = fs.readFileSync(path.join(root, 'js', 'input.js'), 'utf8');
+
+  // D0. 样式已拆分为 css/ 多文件：index.html 必须按层叠顺序逐一引用，且不再引用旧 style.css
+  const cssLinks = [...html.matchAll(/<link[^>]+href="([^"]+\.css)"/g)].map(m => m[1]);
+  const expectLinks = readAllCss.FILES.map(f => 'css/' + f);
+  assert('index.html 按层叠顺序引用全部 css 文件',
+    cssLinks.length === expectLinks.length && expectLinks.every((p, i) => cssLinks[i] === p),
+    cssLinks.join(','));
+  assert('index.html 不再引用旧 style.css', cssLinks.indexOf('style.css') < 0);
+
+  // D0b. 脚本完整性：index.html 必须引用全部本地模块，且无 ESM / 外链脚本
+  const scriptSrcs = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
+  const missingScripts = SOURCE_FILES.filter(f => scriptSrcs.indexOf(f) < 0);
+  assert('index.html 引用全部本地脚本模块', missingScripts.length === 0, 'missing=' + missingScripts.join(','));
+  assert('index.html 无 ESM / 外链脚本',
+    !/type=["']module["']/.test(html) && scriptSrcs.every(s => !/^https?:|^\/\//.test(s)),
+    scriptSrcs.join(','));
 
   const idList = [...html.matchAll(/\sid="([A-Za-z0-9_-]+)"/g)].map(m => m[1]);
   const htmlIds = new Set(idList);
@@ -352,7 +370,7 @@ console.log('--- D. 结构与样式契约（id 对照 / class 定义 / token / �
 
   // D1. JS 字面量引用的 id 必须都存在（DOM 重排最容易踩的坑：元素被移走/改名而代码仍在写它）
   const used = new Set();
-  for (const f of ['js/input.js', 'js/game.js', 'js/render.js', 'js/predictorRenderer.js', 'js/audio.js']) {
+  for (const f of SOURCE_FILES) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     for (const m of src.matchAll(/getElementById\(\s*'([^']+)'\s*\)/g)) used.add(m[1]);
   }

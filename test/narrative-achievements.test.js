@@ -7,6 +7,7 @@
 //   D. 新成就判定：逐项构造场景验证（专精 / 协同 / 每日 / 隐藏关 / 任务全清 / 无尽 / 挑战 / 完美）
 //   E. 幂等与存档兼容：重复判定不重复解锁；未知 id 被忽略、已知（含新增）id 保留
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -62,7 +63,7 @@ function createSandbox(preload) {
   const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
   sandbox.audio = sandbox.window.audio;

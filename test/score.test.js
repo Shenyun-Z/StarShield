@@ -1,5 +1,6 @@
 // 得分标准验证测试：验证 registerClear / 波次奖励 / 失守惩罚 / 模式差异
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -24,7 +25,7 @@ function load(f) { vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), 
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '30');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 sandbox.physics = sandbox.window.physics;
 sandbox.audio = sandbox.window.audio;
 sandbox.predictor = sandbox.window.predictor;

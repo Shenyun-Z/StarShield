@@ -1,6 +1,7 @@
 // 分数整数类型一致性测试（用户 bug：生存最佳分数显示为 274.03333333 分）
 // 验证：旧存档浮点被 parseInt 归一、bestForMode 恒为整数、结算总分与明细一致。
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -32,12 +33,12 @@ sandbox.localStorage.setItem('starshield_best_score', '274.03333333333334');
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '30');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 const game = sandbox.window.game;
 sandbox.game = game;
 sandbox.physics = sandbox.window.physics;
 sandbox.render = sandbox.window.render;
-load('js/input.js');   // 提供 __refreshMenuBest（renderMenuBest）
+loadFiles(load, UI_FILES);   // 提供 __refreshMenuBest（renderMenuBest）
 const refresh = sandbox.window.__refreshMenuBest;
 
 // 1. loadBest 用 parseInt 归一化浮点旧存档 → 整数

@@ -1,0 +1,170 @@
+/* ============================================================
+   StarShield 星盾防线 —— 样式层（v1.13 UI 重设计）
+   风格：深空玻璃拟态（Deep-Space Glassmorphism）
+     底：深空黑 → 玻璃面板（半透明 + 高光描边 + 柔和辉光）→ 卡片 → 状态色
+   分层（加载顺序即层叠顺序）：
+     css/tokens.css      ① 设计 token ② 基础 ③ 图标
+     css/components.css  ④ 通用控件 ⑤ HUD ⑥ 道具/星体/专精
+     css/screens.css     ⑦ 控制条/面板/提示/横幅 ⑧ 暂停层与设置面板 ⑨ 结算面板 ⑩ 菜单
+     css/panels.css      ⑪ 成就 / 星图总览
+     css/motion.css      ⑫ 共享动效 keyframes + 动效降级双通道
+     css/responsive.css  ⑬ 响应式（全部 @media 断点）
+   硬约束（被测试锁定，勿改）：
+     · `.menu` 首块必须含 `justify-content: flex-start`
+     · `.menu h1 { margin-top: auto }`、`.menu-footer { margin-bottom: auto }`
+     · `.hidden` / `.show` 显隐语义、`.rs-star-note`、`.result-hidden-rule`、
+       `.level-card`、`.lc-desc`、`.chapter-head`、`.mod-chip`、`.lc-task` 等类名
+   ============================================================ */
+
+/* ================= ① 设计 token ================= */
+:root {
+  /* —— 底色层次（由深到浅） —— */
+  --bg-0: #05070d;
+  --bg-1: #0a1220;
+  --bg-2: #101a30;
+  --bg-3: #16223c;
+
+  /* —— 主色（青色主色 + 冷蓝 + 紫） —— */
+  --primary: #6fdcff;
+  --primary-2: #8fb6ff;
+  --primary-3: #7c6bff;
+
+  /* —— 文本阶梯 —— */
+  --text-0: #e8f1ff;
+  --text-1: #cfe3ff;
+  --text-2: #8fa3c9;
+  --text-3: #6f86b3;
+
+  /* —— 功能色 —— */
+  --ok: #43e0a0;
+  --warn: #ffc46b;
+  --danger: #ff6b6b;
+  --gold: #ffe28a;
+  --violet: #c89bff;
+
+  /* —— 玻璃层与描边 —— */
+  --glass-1: rgba(10, 18, 32, 0.60);
+  --glass-2: rgba(16, 26, 48, 0.72);
+  --glass-3: rgba(22, 34, 60, 0.84);
+  --glass-hi: rgba(255, 255, 255, 0.06);
+  --stroke-1: rgba(140, 190, 255, 0.16);
+  --stroke-2: rgba(140, 190, 255, 0.32);
+  --stroke-3: rgba(160, 205, 255, 0.58);
+  --stroke-danger: rgba(255, 110, 90, 0.38);
+  --in-hi: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+
+  /* —— 阴影与辉光 —— */
+  --sh-1: 0 6px 18px rgba(0, 0, 0, 0.34);
+  --sh-2: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --glow-p: 0 0 16px rgba(111, 220, 255, 0.20);
+  --glow-p2: 0 0 26px rgba(111, 220, 255, 0.30);
+  --glow-gold: 0 0 14px rgba(255, 226, 138, 0.28);
+  --glow-danger: 0 0 14px rgba(255, 90, 90, 0.24);
+
+  /* —— 圆角 / 间距 —— */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-pill: 999px;
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 22px;
+
+  /* —— 字号阶梯 —— */
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-base: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 24px;
+  --fs-3xl: 34px;
+
+  /* —— 字体 —— */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+
+  /* —— 动效 —— */
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 340ms;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --blur: 14px;
+
+  /* —— 层级 —— */
+  --z-hud: 5;
+  --z-float: 8;
+  --z-menu: 20;
+  --z-pause: 26;
+  --z-settings: 28;
+  --z-result: 30;
+}
+
+/* ================= ② 基础 ================= */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-0);
+  font-family: var(--font);
+  color: var(--text-1);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.stage { position: relative; width: 100vw; height: 100vh; }
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.hidden { display: none !important; }
+
+/* 数字统一等宽对齐（仪表感） */
+.hud span, .sd-val, .sd-mul, .lc-meta, .lc-record, .cr-value, .ps-val,
+.bb-segs, .spec-preview, .prop-opt small, .star-opt small, .ch-stars, .lc-unlock {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 键盘可达：统一焦点环（鼠标点击不显示） */
+button:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* 滚动手感 */
+.menu, .achieve-list, .collect-list, .result-card, .settings-card, .pause-card { scrollbar-width: thin; }
+.menu::-webkit-scrollbar, .achieve-list::-webkit-scrollbar, .collect-list::-webkit-scrollbar,
+.result-card::-webkit-scrollbar { width: 8px; }
+.menu::-webkit-scrollbar-thumb, .achieve-list::-webkit-scrollbar-thumb,
+.collect-list::-webkit-scrollbar-thumb, .result-card::-webkit-scrollbar-thumb {
+  background: rgba(140, 190, 255, 0.22);
+  border-radius: var(--r-pill);
+}
+
+/* ================= ③ 图标 ================= */
+.svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.ic {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: inherit;
+  vertical-align: -2px;
+}
+.ic-sm { width: 14px; height: 14px; }
+.ic-lg { width: 20px; height: 20px; }
+.ic-xs { width: 11px; height: 11px; }

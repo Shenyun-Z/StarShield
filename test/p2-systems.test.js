@@ -7,6 +7,7 @@
 //   6) 一次性道具：配额发放、引力井限时回收、斥力波冲量、凝滞不消耗减速额度
 //   7) 无尽模式与章节化：无限波次、最高波数记录、3 章覆盖 30 关
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -58,7 +59,7 @@ const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'),
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '30');   // 解锁全部关卡
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 sandbox.physics = sandbox.window.physics;
 sandbox.predictor = sandbox.window.predictor;
 sandbox.audio = sandbox.window.audio;

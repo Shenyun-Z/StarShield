@@ -1,0 +1,35 @@
+/* StarShield —— motion.css：⑫ 共享动效 keyframes + 动效降级双通道 */
+
+/* ================= ⑫ 共享动效 keyframes ================= */
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes itemIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes chipPulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.18); }
+}
+
+/* 减少动效：设置项（html[data-motion="reduced"]）与系统偏好（prefers-reduced-motion）双通道，
+   降级为「接近瞬时」——保留状态可见性，仅去掉位移/缩放/循环脉冲。 */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+html[data-motion="reduced"] .prop-opt.active { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .prop-opt.active { animation: none !important; }
+}

@@ -7,6 +7,7 @@
 //   F. 存档健壮性：损坏回退、缺字段回退、清除进度删除新键并复位内存、starshield_setup 保留
 //   G. 展示层：结算面板结局文案、菜单星图总览面板渲染
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -61,13 +62,13 @@ function createSandbox(preload, opts) {
   const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
   sandbox.audio = sandbox.window.audio;
   sandbox.render = sandbox.window.render;
   sandbox.game = sandbox.window.game;
-  if (opts && opts.withInput) load('js/input.js');
+  if (opts && opts.withInput) loadFiles(load, UI_FILES);
   return {
     sandbox, game: sandbox.window.game, window: sandbox.window, ls: sandbox.localStorage,
     el: (id) => (elCache[id] || (elCache[id] = stubEl())),

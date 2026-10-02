@@ -2,6 +2,7 @@
 // 验证 getCurrentRunStats 返回的计分项/权重倍率/明细/总分字段完整，
 // 且 input.showResult 能正确填充 DOM（计分项/权重/倍率/明细/总分）。
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 
@@ -38,14 +39,14 @@ load('js/audio.js');
 load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '30');
 load('js/render.js');
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 const game = sandbox.window.game;
 // input.js 直接引用裸全局 game，需先暴露
 sandbox.game = game;
 sandbox.physics = sandbox.window.physics;
 sandbox.render = sandbox.window.render;
 sandbox.pred = sandbox.window.render; // input.js 用 render
-load('js/input.js');   // 提供 window.__showResult
+loadFiles(load, UI_FILES);   // 提供 window.__showResult
 const showResult = sandbox.window.__showResult;
 
 let failed = 0;

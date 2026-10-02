@@ -3,8 +3,10 @@
 //   - intro/desc 确定性（无随机，所有用户一致）
 //   - 菜单布局使用可滚动的 flex-start（修复第一行关卡被裁剪）
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
+const readAllCss = require('./helpers/css');
 const root = path.join(__dirname, '..');
 
 function stubEl() {
@@ -37,13 +39,13 @@ function assert(name, cond, extra) { if (!cond) { console.error('FAIL: ' + name 
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
 sandbox.localStorage.setItem('starshield_campaign_unlocked', '30');  // 解锁全部便于渲染简介
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 const game = sandbox.window.game;
 sandbox.game = game;
 sandbox.physics = sandbox.window.physics;
 sandbox.render = sandbox.window.render;
 sandbox.audio = sandbox.window.audio;
-load('js/input.js');   // init 会调用 renderLevelCards（默认 survival 模式）
+loadFiles(load, UI_FILES);   // init 会调用 renderLevelCards（默认 survival 模式）
 
 // 1. 关卡配置确定性：intro 字段完整且描述为字符串
 const levels = game.getLevelsForMode('campaign');
@@ -65,7 +67,7 @@ const descMatch = cardHtml.match(/<div class="lc-desc">([^<]+)<\/div>/);
 assert('渲染节点含关卡简介文案（非空描述）', !!descMatch && descMatch[1].length > 8, cardHtml.slice(0, 200));
 
 // 3. 布局修复验证：.menu 使用 flex-start + 首尾 auto margin（避免溢出时裁剪第一行）
-const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
+const css = readAllCss();
 const menuBlock = css.match(/\.menu\s*\{[^}]*\}/)[0];
 assert('菜单使用 justify-content: flex-start', /justify-content:\s*flex-start/.test(menuBlock));
 assert('菜单 h1 使用 margin-top: auto', /\.menu h1\s*\{\s*margin-top:\s*auto/.test(css));

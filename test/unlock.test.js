@@ -4,6 +4,7 @@
 //   - 未解锁的关卡 startGame 返回 false（无法开玩）
 //   - 一键清除进度：清空 localStorage，回到第 1 关
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -28,7 +29,7 @@ vm.createContext(sandbox);
 function load(f) { vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f }); }
 load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
 load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-load('js/game.js');   // 注意：此时 localStorage 无解锁进度，loadBest 读到 0
+loadFiles(load, GAME_FILES);   // 注意：此时 localStorage 无解锁进度，loadBest 读到 0
 sandbox.physics = sandbox.window.physics;
 sandbox.audio = sandbox.window.audio;
 sandbox.predictor = sandbox.window.predictor;

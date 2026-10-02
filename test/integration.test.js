@@ -1,6 +1,7 @@
 // 系统集成测试：端到端验证“陨石撞母星 → 扣血 + 动画”
 // 用 stub DOM 加载真实 game.js，模拟真实 stepFrame 调用路径。
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 
@@ -47,7 +48,7 @@ sandbox.audio = sandbox.window.audio;
 sandbox.render = sandbox.window.render;
 
 // ---- 加载 game.js ----
-load('js/game.js');
+loadFiles(load, GAME_FILES);
 const game = sandbox.window.game;
 if (!game || !game.startGame || !game.stepFrame) {
   console.error('FAIL: game.startGame/stepFrame 未导出');

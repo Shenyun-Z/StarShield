@@ -5,6 +5,7 @@
 //   D. 预测同源：协同在 physics.stepSystem 内部生效（真实与预测走同一步）
 //   E. 隐藏关：解锁条件、不计星、不推进常规进度、满星上限仍 120、可开局可结算
 const fs = require('fs');
+const { GAME_FILES, UI_FILES, loadFiles } = require('./helpers/sandbox');
 const path = require('path');
 const vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -59,14 +60,14 @@ function createSandbox(preload, opts) {
   const load = (f) => vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), sandbox, { filename: f });
   load('js/physics.js'); load('js/predictor.js'); load('js/predictorRenderer.js');
   load('js/audio.js'); load('js/render.js'); load('js/levels-campaign.js');
-  load('js/game.js');
+  loadFiles(load, GAME_FILES);
   sandbox.physics = sandbox.window.physics;
   sandbox.predictor = sandbox.window.predictor;
   sandbox.predictorRenderer = sandbox.window.predictorRenderer;
   sandbox.audio = sandbox.window.audio;      // 必须桥接：game.js 的升级/互转会调用 audio.play
   sandbox.render = sandbox.window.render;
   sandbox.game = sandbox.window.game;
-  if (opts && opts.withInput) load('js/input.js');
+  if (opts && opts.withInput) loadFiles(load, UI_FILES);
   return {
     sandbox, game: sandbox.window.game, physics: sandbox.window.physics,
     predictor: sandbox.window.predictor, ls: sandbox.localStorage,
