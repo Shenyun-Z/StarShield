@@ -1,4 +1,4 @@
-# 星盾防线 / Star Shield（v1.13）
+# 星盾防线 / Star Shield（v1.14）
 
 真实引力物理防守游戏：不能用武器，只能摆放**有质量的真实星体**，用万有引力把来袭陨石**引偏、撞毁或收编**，守护中心母星。
 
@@ -58,6 +58,16 @@
 - **星图总览**（菜单可展开）：收集进度（星数分布 / 任务 / 隐藏关 / 挑战 / 每日连胜 / 成就）、统计摘要（累计时长、拦截、受击、各模式场次与胜率、历史最高分与最高波数）；收集度 100% 时显示「完美星图」。
 - **每关最佳记录**：各模式每一关记录**最佳分数 / 最少受击 / 最快通关用时**，只择优不回退。
 - **设置与界面**：主菜单与暂停层共用同一个「设置」面板（预测线 / 撞母星预警 / 音效 / 主音量滑条 / 减少动效），改动实时生效并保存在本机；界面为深空玻璃拟态风格，统一配色、内联 SVG 图标与等宽数字，并自适应超宽屏 / 桌面 / 平板 / 手机与横屏。选择「减少动效」会关闭过渡与脉冲动画（也自动遵循系统的 `prefers-reduced-motion`）。
+
+## 源码结构
+
+纯前端、零构建、零依赖：经典 `<script>` 按依赖顺序加载（**不使用 ES Modules**，确保 `file://` 双击 `index.html` 即可运行）。
+
+- **物理与渲染**：`js/physics.js`（万有引力 N 体与碰撞）、`js/predictor.js` + `js/predictorRenderer.js`（前向预测与风险判定，与实战共用同一物理内核）、`js/render.js`（Canvas 绘制）、`js/audio.js`（Web Audio 程序化音效）、`js/levels-campaign.js`（确定性关卡数据）。
+- **游戏层**（内部命名空间 `window.SS`，加载顺序即依赖顺序）：`core`（常量 / 全局状态 / 工具）→ `persist`（存档键 / 设置 / 星级）→ `achievements` / `challenge` / `records` / `daily`（成就 / 挑战 / 记录统计 / 每日）→ `progress`（解锁 / 计分 / 隐藏关）→ `waves`（波次生成与特效）→ `world`（关卡初始化 / 星体操作）→ `flow`（主循环 / 结算 / 开局）→ `js/game.js`（聚合对外 API `window.game` + 启动调用）。
+- **界面层**（内部命名空间 `window.SSUI`）：`js/ui/menu.js`、`hud.js`、`panels.js`、`result.js` 与 `js/input.js`（指针 / 键盘 / 主循环装配）。
+- **样式**：`css/` 按 `tokens → components → screens → overlays → menu → panels → motion → responsive` 分层导入。
+- **测试**：`test/*.test.js`（21 套）；`test/helpers/sandbox.js` 集中维护被测文件清单、`test/helpers/css.js` 集中维护样式分层清单，拆分文件时只需改这两处。
 
 ## 致谢
 

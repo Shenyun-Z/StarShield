@@ -1,6 +1,6 @@
 {
   "name": "starshield",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "private": true,
   "description": "星盾防线 StarShield —— 纯前端零依赖引力塔防游戏（无构建、无运行时依赖）",
   "scripts": {
