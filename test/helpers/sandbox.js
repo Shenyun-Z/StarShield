@@ -11,8 +11,8 @@
 //   → GAME_FILES（game 层）→ UI_FILES（input 层）
 'use strict';
 
-// game 层：拆分后为 [core, persist, progress, waves, world, flow, game]；当前为单文件占位。
-const GAME_FILES = ['js/game.js'];
+// game 层：拆分后为 [core, persist, progress, waves, world, flow, game]；当前已拆出 core、waves。
+const GAME_FILES = ['js/core.js', 'js/waves.js', 'js/game.js'];
 
 // input/UI 层：拆分后为 [ui/menu, ui/hud, ui/panels, ui/result, input]；当前已拆出 ui/panels、ui/result。
 const UI_FILES = ['js/ui/menu.js', 'js/ui/hud.js', 'js/ui/panels.js', 'js/ui/result.js', 'js/input.js'];
