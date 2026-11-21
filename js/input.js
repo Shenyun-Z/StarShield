@@ -475,6 +475,16 @@
     window.addEventListener('pointerup', pointerUp);
     window.addEventListener('pointercancel', pointerCancel);
     window.addEventListener('blur', () => pointerCancel());   // 切走窗口 → 无条件放弃本次拖拽
+    // 切到后台自动暂停（M10）：页面隐藏时 rAF 停摆本就不推进，但窗口被遮挡/失焦时仍在跑，
+    // 玩家不在屏前不该继续掉血。只在「对局进行中」生效（setPaused 自带未开局/已结束的拒绝），
+    // 恢复可见时**不自动续玩**——交给玩家自己点「继续」，避免回来就被一波流糊脸。
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) return;
+        pointerCancel();
+        if (game.setPaused(true)) syncPauseUI();
+      });
+    }
     // 右键菜单会打断拖拽流程，画布上禁用
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     // 全局兜底：任何未捕获错误/未处理拒绝都要留下可追溯日志（不阻断主循环）

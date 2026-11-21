@@ -18,10 +18,26 @@
   let fieldLines = [];   // {x,y,dx,dy,strength}
   let fieldTimer = 0;
 
+  // 画布尺寸口径（M9）：canvas.width 按整数存储，而 innerWidth * devicePixelRatio 可能是小数
+  // （Windows 125% / 150% 缩放 + 奇数视口宽度即为常态）。原先用浮点值直接比较，会永远不等，
+  // 导致每帧都进 resize()，而给 canvas.width 赋值会清空画布并重置上下文状态——高 DPI 下白耗一帧绘制。
+  // 这里统一取整后再比较，保证「尺寸未变则不动」。
+  function targetSize() {
+    const d = window.devicePixelRatio || 1;
+    return {
+      d: d,
+      w: Math.floor(window.innerWidth * d),
+      h: Math.floor(window.innerHeight * d),
+    };
+  }
   function resize(canvas) {
-    dpr = window.devicePixelRatio || 1;
-    canvas.width = window.innerWidth * dpr;
-    canvas.height = window.innerHeight * dpr;
+    const t = targetSize();
+    // 三重判等：DPR 与像素尺寸都没变才跳过。给 canvas.width 赋值会清空画布并重置上下文
+    // 状态，所以这里必须挡住「浮点比较永远不等」导致的每帧重建。
+    if (dpr === t.d && canvas.width === t.w && canvas.height === t.h) return;
+    dpr = t.d;
+    canvas.width = t.w;
+    canvas.height = t.h;
   }
 
   function rebuildField(state) {
@@ -329,7 +345,7 @@
   }
 
   function render(canvas, state) {
-    if (canvas.width !== window.innerWidth * dpr) resize(canvas);
+    resize(canvas);          // 尺寸/DPR 变化才真正重建（幂等，见 resize 内部判等）
     const ctx = contextOf(canvas);
     if (!ctx) return;                       // 上下文不可用（极端环境）时安全退出
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#05070d">
+  <!-- 内容安全策略（M11）：游戏纯单机、无任何外部资源，因此把出口面收紧到最小。
+       script-src 只允许同目录脚本（无内联脚本、无内联事件处理器）；
+       style-src 保留 'unsafe-inline' 仅为现有 13 处 style="..." 行内样式；
+       connect-src 'none' 是对未来任何误加的网络请求的硬性闸门（本游戏不该有远端通信）。 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>StarShield 星盾防线</title>
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/components.css">
