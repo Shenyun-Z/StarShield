@@ -1,4 +1,4 @@
-# 星盾防线 / Star Shield（v1.15）
+# 星盾防线 / Star Shield（v1.16）
 
 真实引力物理防守游戏：不能用武器，只能摆放**有质量的真实星体**，用万有引力把来袭陨石**引偏、撞毁或收编**，守护中心母星。
 
@@ -68,7 +68,7 @@
 - **游戏层**（内部命名空间 `window.SS`，加载顺序即依赖顺序）：`core`（常量 / 全局状态 / 工具）→ `persist`（存档键 / 设置 / 星级）→ `achievements` / `challenge` / `records` / `daily`（成就 / 挑战 / 记录统计 / 每日）→ `progress`（解锁 / 计分 / 隐藏关）→ `waves`（波次生成与特效）→ `world`（关卡初始化 / 星体操作）→ `flow`（主循环 / 结算 / 开局）→ `js/game.js`（聚合对外 API `window.game` + 启动调用）。
 - **界面层**（内部命名空间 `window.SSUI`）：`js/ui/menu.js`、`hud.js`、`panels.js`、`result.js` 与 `js/input.js`（指针 / 键盘 / 主循环装配）。
 - **样式**：`css/` 按 `tokens → components → screens → overlays → menu → panels → motion → responsive` 分层导入。
-- **测试**：`test/*.test.js`（22 套）；`test/helpers/sandbox.js` 集中维护被测文件清单、`test/helpers/css.js` 集中维护样式分层清单，拆分文件时只需改这两处。
+- **测试**：`test/*.test.js`（24 套）；`test/helpers/sandbox.js` 集中维护被测文件清单、`test/helpers/css.js` 集中维护样式分层清单，拆分文件时只需改这两处。
 
 ## 致谢
 

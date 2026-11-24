@@ -231,6 +231,17 @@
   function rand(a, b) { return a + Math.random() * (b - a); }
   function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
   function lerp(a, b, t) { return a + (b - a) * t; }
+  // 文本转义（M12）：界面层大量使用 innerHTML 拼接，任何进入 HTML 的字符串都应先过这里。
+  // 目前全部插值都源自本地静态表（关卡章节标题、成就名、结局文案），属于"现在安全、
+  // 以后接入用户输入或远端内容就会破"的模式；统一走转义后，这条假设不再依赖人工记忆。
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   // ===== 导出到共享命名空间 =====
   SS.DT = DT;
@@ -288,6 +299,7 @@
   SS.rand = rand;
   SS.randInt = randInt;
   SS.lerp = lerp;
+  SS.escHtml = escHtml;
   // ===== 可变标量（需被赋值；作为 SS 属性跨文件共享，避免值拷贝失效）=====
   SS.stepAccumulator = 0;   // 未消耗的真实时间（秒）
   SS.bestScore = 0;

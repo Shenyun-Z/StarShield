@@ -60,8 +60,8 @@
           const maxStars = (ch.to - ch.from + 1) * 3;
           const head = document.createElement('div');
           head.className = 'chapter-head';
-          head.innerHTML = `<span class="ch-title">${ch.title}</span>`
-            + `<span class="ch-sub">${ch.subtitle}</span>`
+          head.innerHTML = `<span class="ch-title">${window.SS.escHtml(ch.title)}</span>`
+            + `<span class="ch-sub">${window.SS.escHtml(ch.subtitle)}</span>`
             + `<span class="ch-stars">★ ${stars}/${maxStars}</span>`;
           wrap.appendChild(head);
         }

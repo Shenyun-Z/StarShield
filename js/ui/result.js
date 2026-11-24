@@ -110,7 +110,7 @@
       const news = game.takeNewAchievements();
       if (news.length) {
         achBox.style.display = '';
-        achBox.innerHTML = news.map(a => `<div class="ra-item">🏆 成就解锁 · ${a.name} —— ${a.desc}</div>`).join('');
+        achBox.innerHTML = news.map(a => `<div class="ra-item">🏆 成就解锁 · ${window.SS.escHtml(a.name)} —— ${window.SS.escHtml(a.desc)}</div>`).join('');
         audio.play('place');
       } else {
         achBox.style.display = 'none';
@@ -168,8 +168,8 @@
       const ending = game.state.lastEnding;
       if (ending && ending.title && ending.text) {
         endBox.className = 'result-ending';
-        endBox.innerHTML = '<div class="re-title">' + ending.title + '</div>'
-          + '<div class="re-text">' + ending.text + '</div>';
+        endBox.innerHTML = '<div class="re-title">' + window.SS.escHtml(ending.title) + '</div>'
+          + '<div class="re-text">' + window.SS.escHtml(ending.text) + '</div>';
         endBox.style.display = '';
       } else {
         endBox.style.display = 'none';
